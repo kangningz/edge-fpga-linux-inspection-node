@@ -1,0 +1,1144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>基于 FPGA + Linux 的边缘智能巡检感知节点</title>
+  <style>
+    :root {
+      --bg: #f4f1e9;
+      --panel: rgba(255, 255, 255, 0.9);
+      --ink: #233431;
+      --muted: #657571;
+      --line: rgba(35, 52, 49, 0.08);
+      --accent: #1f6f78;
+      --accent-2: #d08a1f;
+      --ok: #2b8b63;
+      --err: #c64b36;
+      --shadow: 0 14px 40px rgba(22, 32, 28, 0.07);
+      --radius: 22px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(circle at 15% 10%, rgba(31, 111, 120, 0.16), transparent 28%),
+        radial-gradient(circle at 88% 15%, rgba(208, 138, 31, 0.16), transparent 26%),
+        linear-gradient(180deg, #f7f5ef, #ece7dd);
+      min-height: 100vh;
+    }
+
+    .wrap {
+      width: min(1440px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 40px;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(32px, 5vw, 58px);
+      line-height: 1.05;
+      letter-spacing: 0.01em;
+    }
+
+    .sub {
+      margin: 0 0 24px;
+      max-width: 1180px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.75;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1.35fr 0.95fr;
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .row-equal {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 20px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    .metric-card {
+      transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+    }
+
+    .metric-card.alarm-active {
+      border-color: rgba(198, 75, 54, 0.55);
+      background: rgba(198, 75, 54, 0.1);
+      color: var(--err);
+    }
+
+    .label {
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .value {
+      margin-top: 10px;
+      font-size: 30px;
+      font-weight: 700;
+    }
+
+    .panel-title {
+      margin: 0 0 14px;
+      font-size: 20px;
+    }
+
+    .meta {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.8;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 7px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      background: rgba(43, 139, 99, 0.12);
+      color: var(--ok);
+      margin-bottom: 14px;
+    }
+
+    .status-pill.offline {
+      background: rgba(198, 75, 54, 0.12);
+      color: var(--err);
+    }
+
+    .btns,
+    .preset-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    button {
+      border: none;
+      border-radius: 999px;
+      background: var(--accent);
+      color: #fff;
+      padding: 10px 16px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: transform 0.16s ease, opacity 0.16s ease;
+    }
+
+    button:hover { transform: translateY(-1px); }
+    button.secondary { background: #48676b; }
+    button.warn { background: var(--accent-2); }
+    button.err { background: var(--err); }
+    button.ghost {
+      background: #e7efee;
+      color: var(--ink);
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .field label {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .field input,
+    .field select {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.92);
+      border-radius: 14px;
+      padding: 10px 12px;
+      font-size: 14px;
+      color: var(--ink);
+    }
+
+    .hint {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.75;
+    }
+
+    .preview-box {
+      border-radius: 18px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, #f4f7f6, #e8edeb);
+      min-height: 360px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .preview-box.selectable {
+      cursor: crosshair;
+      touch-action: none;
+    }
+
+    .preview-box.alarm-active {
+      border-color: rgba(198, 75, 54, 0.85);
+      box-shadow: 0 0 0 3px rgba(198, 75, 54, 0.15);
+    }
+
+    .preview-box img {
+      width: 100%;
+      height: auto;
+      display: none;
+      background: #fff;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+
+    .preview-box img.show {
+      display: block;
+    }
+
+    .roi-overlay {
+      position: absolute;
+      display: none;
+      border: 2px solid #f2c94c;
+      box-shadow:
+        0 0 0 1px rgba(35, 52, 49, 0.38),
+        0 0 18px rgba(242, 201, 76, 0.45);
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .roi-overlay.alarm {
+      border-color: var(--err);
+      box-shadow:
+        0 0 0 1px rgba(35, 52, 49, 0.38),
+        0 0 20px rgba(198, 75, 54, 0.55);
+    }
+
+    .roi-tag {
+      position: absolute;
+      left: -2px;
+      top: -34px;
+      max-width: min(360px, calc(100vw - 56px));
+      padding: 5px 8px;
+      border-radius: 8px;
+      background: rgba(35, 52, 49, 0.88);
+      color: #fff;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.35;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .roi-overlay.alarm .roi-tag {
+      background: rgba(198, 75, 54, 0.92);
+    }
+
+    .roi-selection {
+      position: absolute;
+      display: none;
+      border: 2px dashed #ffffff;
+      background: rgba(31, 111, 120, 0.16);
+      box-shadow: 0 0 0 1px rgba(31, 111, 120, 0.7);
+      pointer-events: none;
+      z-index: 3;
+    }
+
+    .preview-empty {
+      padding: 24px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.8;
+    }
+
+    .preview-debug {
+      margin-top: 12px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: pre-wrap;
+      line-height: 1.7;
+      word-break: break-all;
+    }
+
+    .alarm-banner {
+      display: none;
+      margin-top: 12px;
+      border: 1px solid rgba(198, 75, 54, 0.28);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: rgba(198, 75, 54, 0.1);
+      color: var(--err);
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.6;
+    }
+
+    .alarm-banner.active {
+      display: block;
+    }
+
+    .table-wrap {
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    .alarm-events-table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .alarm-events-table th,
+    .alarm-events-table td {
+      border-bottom: 1px solid var(--line);
+      padding: 9px 8px;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .alarm-events-table th {
+      color: var(--ink);
+      font-weight: 700;
+      background: rgba(31, 111, 120, 0.06);
+    }
+
+    .alarm-events-table a {
+      color: var(--accent);
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      line-height: 1.75;
+    }
+
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      background: rgba(31, 111, 120, 0.08);
+      border-radius: 8px;
+      padding: 2px 6px;
+    }
+
+    @media (max-width: 980px) {
+      .row,
+      .row-equal {
+        grid-template-columns: 1fr;
+      }
+
+      .form-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 560px) {
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>基于 FPGA + Linux 的边缘智能巡检感知节点</h1>
+    <p class="sub">
+      树莓派 5 本地控制台。这里统一展示 OV2640 输入、FPGA 采集与预处理、FIFO/UDP 遥测回传、Linux C++ 控制服务、Web 展示与告警控制，并支持参数热更新。
+      如果当前 FPGA 运行的是 JPEG 预览顶层或 DDR3 RGB565 预览顶层，页面右侧还会显示最近一帧相机图像。
+    </p>
+
+    <div class="grid">
+      <div class="card metric-card"><div class="label">Node State</div><div class="value" id="online-text">--</div></div>
+      <div id="alarm-card" class="card metric-card"><div class="label">Alarm</div><div class="value" id="alarm-state">--</div></div>
+      <div class="card metric-card"><div class="label">Frame ID</div><div class="value" id="frame-id">--</div></div>
+      <div class="card metric-card"><div class="label">Resolution</div><div class="value" id="resolution">--</div></div>
+      <div class="card metric-card"><div class="label">Active Pixel</div><div class="value" id="active-pixel">--</div></div>
+      <div class="card metric-card"><div class="label">Bright Count</div><div class="value" id="bright-count">--</div></div>
+      <div class="card metric-card"><div class="label">ROI Sum</div><div class="value" id="roi-sum">--</div></div>
+    </div>
+
+    <div class="row">
+      <div class="card">
+        <h2 class="panel-title">链路状态</h2>
+        <div id="status-pill" class="status-pill">等待数据</div>
+        <p class="meta" id="status-meta">正在加载...</p>
+      </div>
+      <div class="card">
+        <h2 class="panel-title">基础控制</h2>
+        <div class="btns">
+          <button onclick="sendCmd('query_status')">查询状态</button>
+          <button onclick="sendCmd('start_capture')">开始采集</button>
+          <button class="secondary" onclick="sendCmd('stop_capture')">停止采集</button>
+          <button class="warn" onclick="sendCmd('apply_defaults')">应用默认寄存器</button>
+          <button onclick="sendCmd('buzzer_on')">蜂鸣器开</button>
+          <button class="secondary" onclick="sendCmd('buzzer_off')">蜂鸣器关</button>
+          <button class="err" onclick="sendCmd('clear_error')">清除错误</button>
+        </div>
+        <p class="hint" id="command-result">命令结果会显示在这里。</p>
+      </div>
+    </div>
+
+    <div class="row-equal">
+      <div class="card">
+        <h2 class="panel-title">参数热更新</h2>
+        <div class="preset-row">
+          <button class="ghost" onclick="applyDefaultPreset()">加载项目默认值</button>
+          <button class="ghost" onclick="applyFullFramePreset()">全帧巡检 800x600</button>
+          <button class="ghost" onclick="applyCenterPreset()">中心窗口 160x120</button>
+          <button class="warn" onclick="applyLowThresholdDemo()">低阈值演示</button>
+        </div>
+        <div class="form-grid">
+          <div class="field"><label for="roi_x">ROI_X</label><input id="roi_x" type="number" min="0" step="1"></div>
+          <div class="field"><label for="roi_y">ROI_Y</label><input id="roi_y" type="number" min="0" step="1"></div>
+          <div class="field"><label for="roi_w">ROI_W</label><input id="roi_w" type="number" min="1" step="1"></div>
+          <div class="field"><label for="roi_h">ROI_H</label><input id="roi_h" type="number" min="1" step="1"></div>
+          <div class="field"><label for="bright_threshold">亮度阈值</label><input id="bright_threshold" type="number" min="0" max="65535" step="1"></div>
+          <div class="field"><label for="alarm_count_threshold">告警亮点数阈值</label><input id="alarm_count_threshold" type="number" min="1" max="65535" step="1"></div>
+          <div class="field">
+            <label for="tx_mode">TX_MODE</label>
+            <select id="tx_mode">
+              <option value="0">0 - 兼容/保留</option>
+              <option value="1">1 - 统计遥测模式</option>
+              <option value="2">2 - 项目默认模式</option>
+              <option value="3">3 - JPEG 预览模式</option>
+              <option value="4">4 - DDR3 RGB565 预览模式</option>
+            </select>
+          </div>
+        </div>
+        <div class="btns" style="margin-top:16px;">
+          <button onclick="applyParams()">下发参数</button>
+          <button class="secondary" onclick="fetchStatus()">刷新状态</button>
+        </div>
+        <p class="hint" id="params-result">这里显示参数下发结果。</p>
+      </div>
+
+      <div class="card">
+        <h2 class="panel-title">摄像头预览</h2>
+        <div class="field" style="max-width: 280px; margin-bottom: 12px;">
+          <label for="preview_decode">Preview Decode</label>
+          <select id="preview_decode" onchange="lastPreviewToken=''; fetchStatus();">
+            <option value="">auto/default</option>
+            <option value="rgb565">rgb565</option>
+            <option value="rgb565_swap">rgb565_swap</option>
+            <option value="yuyv">yuyv</option>
+            <option value="uyvy">uyvy</option>
+          </select>
+        </div>
+        <div id="preview-box" class="preview-box selectable">
+          <img id="preview-img" alt="preview">
+          <div id="roi-overlay" class="roi-overlay"><div id="roi-tag" class="roi-tag"></div></div>
+          <div id="roi-selection" class="roi-selection"></div>
+          <div id="preview-empty" class="preview-empty">
+            暂无预览帧。<br>
+            当 FPGA 运行在 JPEG 预览或 DDR3 RGB565 预览顶层后，页面会自动显示最近一帧。
+          </div>
+        </div>
+        <div class="btns" style="margin-top:12px;">
+          <button onclick="applyParams()">下发当前 ROI</button>
+          <button class="secondary" onclick="resetRoiToTelemetry()">恢复遥测 ROI</button>
+        </div>
+        <div id="alarm-banner" class="alarm-banner">告警触发: bright_count >= threshold</div>
+        <div class="hint" id="preview-meta">预览帧ID: --，格式: --，尺寸: --，预览字节数: --</div>
+        <div class="hint" id="preview-meta-2">预览包数: --，完成帧数: --，最近预览时间: --</div>
+        <div class="preview-debug" id="preview-debug">SOI/EOI 与头尾字节诊断会显示在这里。</div>
+      </div>
+    </div>
+
+    <div class="row-equal">
+      <div class="card">
+        <h2 class="panel-title">告警事件</h2>
+        <p class="hint" id="alarm-event-summary">累计告警事件: --</p>
+        <div class="table-wrap">
+          <table class="alarm-events-table">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>Frame</th>
+                <th>ROI</th>
+                <th>Bright</th>
+                <th>ROI Sum</th>
+                <th>快照</th>
+              </tr>
+            </thead>
+            <tbody id="alarm-events">
+              <tr><td colspan="6">正在加载...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <h2 class="panel-title">最近事件</h2>
+        <ul id="recent-events"><li>正在加载...</li></ul>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <h2 class="panel-title">说明</h2>
+      <ul>
+        <li>主统计顶层会返回完整状态包，页面顶部统计卡片会随之更新。</li>
+        <li>DDR3 RGB565 预览链路会持续回传最近帧，右侧预览框会自动刷新。</li>
+        <li>告警事件只在 <code>alarm_active</code> 从 0 变 1 时记录一次，避免同一次持续告警刷屏。</li>
+        <li>如果控制按钮无效，请先确认当前 FPGA 运行的是带命令接收链的主项目顶层。</li>
+        <li>树莓派服务默认接口是 <code>/api/status</code> 和 <code>/api/preview</code>。</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    const previewImg = document.getElementById("preview-img");
+    const previewBox = document.getElementById("preview-box");
+    const previewEmpty = document.getElementById("preview-empty");
+    const previewDecode = document.getElementById("preview_decode");
+    const roiOverlay = document.getElementById("roi-overlay");
+    const roiTag = document.getElementById("roi-tag");
+    const roiSelection = document.getElementById("roi-selection");
+    let lastPreviewToken = "";
+    let latestStatus = null;
+    let paramsEditPending = false;
+    let roiDrag = null;
+    let statusRequestInFlight = false;
+    let previewRequestInFlight = false;
+    let pendingPreviewStatus = null;
+
+    function setText(id, text) {
+      document.getElementById(id).textContent = text;
+    }
+
+    function chooseFrameId(status) {
+      return status.frame_id || status.preview_frame_id || 0;
+    }
+
+    function chooseWidth(status) {
+      return status.frame_width || status.preview_width || 0;
+    }
+
+    function chooseHeight(status) {
+      return status.frame_height || status.preview_height || 0;
+    }
+
+    function chooseActivePixels(status) {
+      if (status.active_pixel_count) {
+        return status.active_pixel_count;
+      }
+      if (status.preview_width && status.preview_height) {
+        return status.preview_width * status.preview_height;
+      }
+      return 0;
+    }
+
+    function currentParam(status, currentKey, defaultKey, fallback) {
+      return status[currentKey] ?? status[defaultKey] ?? fallback;
+    }
+
+    async function fetchJson(url) {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      return await res.json();
+    }
+
+    async function sendCmd(name) {
+      try {
+        const data = await fetchJson(`/api/command?name=${encodeURIComponent(name)}`);
+        setText("command-result", `${name}: ${data.message || (data.ok ? "sent" : "failed")}`);
+        setTimeout(fetchStatus, 300);
+      } catch (err) {
+        setText("command-result", `${name}: ${err.message}`);
+      }
+    }
+
+    async function applyParams() {
+      const params = new URLSearchParams({
+        roi_x: document.getElementById("roi_x").value,
+        roi_y: document.getElementById("roi_y").value,
+        roi_w: document.getElementById("roi_w").value,
+        roi_h: document.getElementById("roi_h").value,
+        bright_threshold: document.getElementById("bright_threshold").value,
+        alarm_count_threshold: document.getElementById("alarm_count_threshold").value,
+        tx_mode: document.getElementById("tx_mode").value
+      });
+      try {
+        const data = await fetchJson(`/api/apply_params?${params.toString()}`);
+        setText("params-result", data.message || (data.ok ? "runtime params applied" : "apply failed"));
+        if (data.ok !== false) {
+          setTimeout(() => {
+            paramsEditPending = false;
+            fetchStatus();
+          }, 600);
+        } else {
+          setTimeout(fetchStatus, 300);
+        }
+      } catch (err) {
+        setText("params-result", err.message);
+      }
+    }
+
+    function applyDefaultPreset() {
+      paramsEditPending = true;
+      document.getElementById("roi_x").value = defaultState.default_roi_x ?? 0;
+      document.getElementById("roi_y").value = defaultState.default_roi_y ?? 0;
+      document.getElementById("roi_w").value = defaultState.default_roi_w ?? 64;
+      document.getElementById("roi_h").value = defaultState.default_roi_h ?? 64;
+      document.getElementById("bright_threshold").value = defaultState.default_bright_threshold ?? 128;
+      document.getElementById("alarm_count_threshold").value = defaultState.default_alarm_count_threshold ?? 256;
+      document.getElementById("tx_mode").value = String(defaultState.default_tx_mode ?? 2);
+      updateRoiOverlayFromInputs();
+    }
+
+    function applyFullFramePreset() {
+      paramsEditPending = true;
+      document.getElementById("roi_x").value = 0;
+      document.getElementById("roi_y").value = 0;
+      document.getElementById("roi_w").value = 800;
+      document.getElementById("roi_h").value = 600;
+      updateRoiOverlayFromInputs();
+    }
+
+    function applyCenterPreset() {
+      paramsEditPending = true;
+      document.getElementById("roi_x").value = 320;
+      document.getElementById("roi_y").value = 240;
+      document.getElementById("roi_w").value = 160;
+      document.getElementById("roi_h").value = 120;
+      updateRoiOverlayFromInputs();
+    }
+
+    function applyLowThresholdDemo() {
+      paramsEditPending = true;
+      document.getElementById("alarm_count_threshold").value = 1;
+      updateRoiOverlayFromInputs();
+      setText("params-result", "低阈值演示: alarm_count_threshold=1，正在下发...");
+      applyParams();
+    }
+
+    function showPreviewPlaceholder(message) {
+      previewImg.classList.remove("show");
+      previewImg.removeAttribute("src");
+      hideRoiOverlay();
+      previewEmpty.style.display = "block";
+      previewEmpty.innerHTML = message;
+    }
+
+    function currentPreviewDecode() {
+      return previewDecode?.value || "";
+    }
+
+    function hideRoiOverlay() {
+      roiOverlay.style.display = "none";
+      roiSelection.style.display = "none";
+    }
+
+    function roiValue(status, key, defaultKey, fallback) {
+      const value = Number(currentParam(status, key, defaultKey, fallback));
+      return Number.isFinite(value) ? value : fallback;
+    }
+
+    function inputNumber(id, fallback) {
+      const value = Number(document.getElementById(id).value);
+      return Number.isFinite(value) ? value : fallback;
+    }
+
+    function updateRoiOverlayFromInputs() {
+      if (!latestStatus) {
+        return;
+      }
+      updateRoiOverlay({
+        ...latestStatus,
+        current_roi_x: inputNumber("roi_x", 0),
+        current_roi_y: inputNumber("roi_y", 0),
+        current_roi_w: inputNumber("roi_w", 1),
+        current_roi_h: inputNumber("roi_h", 1),
+        current_alarm_count_threshold: inputNumber("alarm_count_threshold", 256)
+      });
+    }
+
+    function resetRoiToTelemetry() {
+      paramsEditPending = false;
+      if (!latestStatus) {
+        return;
+      }
+      document.getElementById("roi_x").value = currentParam(latestStatus, "current_roi_x", "default_roi_x", 0);
+      document.getElementById("roi_y").value = currentParam(latestStatus, "current_roi_y", "default_roi_y", 0);
+      document.getElementById("roi_w").value = currentParam(latestStatus, "current_roi_w", "default_roi_w", 64);
+      document.getElementById("roi_h").value = currentParam(latestStatus, "current_roi_h", "default_roi_h", 64);
+      updateRoiOverlay(latestStatus);
+      setText("params-result", "已恢复为当前遥测 ROI。");
+    }
+
+    function previewGeometry() {
+      const status = latestStatus || {};
+      const previewWidth = Number(status.preview_width || 0);
+      const previewHeight = Number(status.preview_height || 0);
+      if (!previewImg.classList.contains("show") || previewWidth <= 0 || previewHeight <= 0) {
+        return null;
+      }
+
+      const imageRect = previewImg.getBoundingClientRect();
+      const boxRect = previewBox.getBoundingClientRect();
+      if (imageRect.width <= 0 || imageRect.height <= 0) {
+        return null;
+      }
+
+      return { previewWidth, previewHeight, imageRect, boxRect };
+    }
+
+    function pointFromPreviewEvent(event) {
+      const geometry = previewGeometry();
+      if (!geometry) {
+        return null;
+      }
+
+      const px = Math.max(0, Math.min(event.clientX - geometry.imageRect.left, geometry.imageRect.width));
+      const py = Math.max(0, Math.min(event.clientY - geometry.imageRect.top, geometry.imageRect.height));
+      return {
+        x: Math.round(px * geometry.previewWidth / geometry.imageRect.width),
+        y: Math.round(py * geometry.previewHeight / geometry.imageRect.height)
+      };
+    }
+
+    function renderRoiSelection(start, end) {
+      const geometry = previewGeometry();
+      if (!geometry) {
+        roiSelection.style.display = "none";
+        return;
+      }
+
+      const x0 = Math.max(0, Math.min(start.x, end.x));
+      const y0 = Math.max(0, Math.min(start.y, end.y));
+      const x1 = Math.min(geometry.previewWidth, Math.max(start.x, end.x));
+      const y1 = Math.min(geometry.previewHeight, Math.max(start.y, end.y));
+      const scaleX = geometry.imageRect.width / geometry.previewWidth;
+      const scaleY = geometry.imageRect.height / geometry.previewHeight;
+      roiSelection.style.left = `${geometry.imageRect.left - geometry.boxRect.left + x0 * scaleX}px`;
+      roiSelection.style.top = `${geometry.imageRect.top - geometry.boxRect.top + y0 * scaleY}px`;
+      roiSelection.style.width = `${Math.max(1, (x1 - x0) * scaleX)}px`;
+      roiSelection.style.height = `${Math.max(1, (y1 - y0) * scaleY)}px`;
+      roiSelection.style.display = "block";
+    }
+
+    function beginRoiDrag(event) {
+      if (event.button !== undefined && event.button !== 0) {
+        return;
+      }
+      const point = pointFromPreviewEvent(event);
+      if (!point) {
+        return;
+      }
+
+      event.preventDefault();
+      previewBox.setPointerCapture?.(event.pointerId);
+      roiDrag = { pointerId: event.pointerId, start: point, end: point };
+      renderRoiSelection(point, point);
+    }
+
+    function moveRoiDrag(event) {
+      if (!roiDrag || event.pointerId !== roiDrag.pointerId) {
+        return;
+      }
+      const point = pointFromPreviewEvent(event);
+      if (!point) {
+        return;
+      }
+
+      event.preventDefault();
+      roiDrag.end = point;
+      renderRoiSelection(roiDrag.start, roiDrag.end);
+    }
+
+    function finishRoiDrag(event) {
+      if (!roiDrag || event.pointerId !== roiDrag.pointerId) {
+        return;
+      }
+
+      const drag = roiDrag;
+      roiDrag = null;
+      previewBox.releasePointerCapture?.(event.pointerId);
+      roiSelection.style.display = "none";
+
+      const geometry = previewGeometry();
+      if (!geometry) {
+        return;
+      }
+
+      const x0 = Math.max(0, Math.min(drag.start.x, drag.end.x));
+      const y0 = Math.max(0, Math.min(drag.start.y, drag.end.y));
+      const x1 = Math.min(geometry.previewWidth, Math.max(drag.start.x, drag.end.x));
+      const y1 = Math.min(geometry.previewHeight, Math.max(drag.start.y, drag.end.y));
+      const roiW = Math.max(1, x1 - x0);
+      const roiH = Math.max(1, y1 - y0);
+      if (roiW < 3 && roiH < 3) {
+        return;
+      }
+
+      paramsEditPending = true;
+      document.getElementById("roi_x").value = x0;
+      document.getElementById("roi_y").value = y0;
+      document.getElementById("roi_w").value = roiW;
+      document.getElementById("roi_h").value = roiH;
+      updateRoiOverlayFromInputs();
+      setText("params-result", `已框选 ROI=(${x0},${y0},${roiW},${roiH})，可下发参数。`);
+    }
+
+    function updateRoiOverlay(status) {
+      if (!status || !previewImg.classList.contains("show")) {
+        hideRoiOverlay();
+        return;
+      }
+
+      const previewWidth = Number(status.preview_width || 0);
+      const previewHeight = Number(status.preview_height || 0);
+      if (previewWidth <= 0 || previewHeight <= 0) {
+        hideRoiOverlay();
+        return;
+      }
+
+      const imageRect = previewImg.getBoundingClientRect();
+      const boxRect = previewImg.parentElement.getBoundingClientRect();
+      if (imageRect.width <= 0 || imageRect.height <= 0) {
+        hideRoiOverlay();
+        return;
+      }
+
+      const roiX = roiValue(status, "current_roi_x", "default_roi_x", 0);
+      const roiY = roiValue(status, "current_roi_y", "default_roi_y", 0);
+      const roiW = roiValue(status, "current_roi_w", "default_roi_w", 64);
+      const roiH = roiValue(status, "current_roi_h", "default_roi_h", 64);
+      const clippedX = Math.max(0, Math.min(roiX, previewWidth));
+      const clippedY = Math.max(0, Math.min(roiY, previewHeight));
+      const clippedRight = Math.max(clippedX, Math.min(roiX + roiW, previewWidth));
+      const clippedBottom = Math.max(clippedY, Math.min(roiY + roiH, previewHeight));
+      const clippedW = clippedRight - clippedX;
+      const clippedH = clippedBottom - clippedY;
+      if (clippedW <= 0 || clippedH <= 0) {
+        hideRoiOverlay();
+        return;
+      }
+
+      const scaleX = imageRect.width / previewWidth;
+      const scaleY = imageRect.height / previewHeight;
+      roiOverlay.style.left = `${imageRect.left - boxRect.left + clippedX * scaleX}px`;
+      roiOverlay.style.top = `${imageRect.top - boxRect.top + clippedY * scaleY}px`;
+      roiOverlay.style.width = `${clippedW * scaleX}px`;
+      roiOverlay.style.height = `${clippedH * scaleY}px`;
+      roiTag.style.top = (imageRect.top - boxRect.top + clippedY * scaleY < 36) ? "4px" : "-34px";
+
+      const alarmActive = Boolean((status.status_bits || 0) & 0x20);
+      roiOverlay.className = `roi-overlay${alarmActive ? " alarm" : ""}`;
+      roiTag.textContent =
+        `ROI ${roiX},${roiY},${roiW}x${roiH} | bright ${status.bright_count || 0}/${currentParam(status, "current_alarm_count_threshold", "default_alarm_count_threshold", 256)} | alarm ${alarmActive ? "ON" : "OFF"}`;
+      roiOverlay.style.display = "block";
+    }
+
+    function loadPreview(status) {
+      if (!status.preview_available) {
+        lastPreviewToken = "";
+        pendingPreviewStatus = null;
+        showPreviewPlaceholder("暂无预览帧。<br>当 FPGA 运行在 JPEG 预览或 DDR3 RGB565 预览顶层后，页面会自动显示最近一帧。");
+        return;
+      }
+
+      const token = [
+        status.preview_frame_id || 0,
+        status.preview_bytes || 0,
+        status.preview_format || "none",
+        status.preview_last_time || "n/a",
+        currentPreviewDecode()
+      ].join(":");
+
+      if (token === lastPreviewToken) {
+        return;
+      }
+      if (previewRequestInFlight) {
+        pendingPreviewStatus = status;
+        return;
+      }
+      lastPreviewToken = token;
+
+      const apiUrl = status.preview_api_url || "/api/preview";
+      const staticUrl = status.preview_file_url || "";
+      const cacheBust = `frame=${encodeURIComponent(status.preview_frame_id || 0)}&ts=${Date.now()}`;
+      const decode = currentPreviewDecode();
+      const decodeSuffix = decode ? `&decode=${encodeURIComponent(decode)}` : "";
+      previewRequestInFlight = true;
+
+      previewImg.onload = () => {
+        previewRequestInFlight = false;
+        previewEmpty.style.display = "none";
+        previewImg.classList.add("show");
+        if (paramsEditPending) {
+          updateRoiOverlayFromInputs();
+        } else {
+          updateRoiOverlay(latestStatus || status);
+        }
+        if (pendingPreviewStatus) {
+          const nextStatus = pendingPreviewStatus;
+          pendingPreviewStatus = null;
+          loadPreview(nextStatus);
+        }
+      };
+
+      previewImg.onerror = () => {
+        previewRequestInFlight = false;
+        if (!decode && staticUrl && !previewImg.dataset.fallbackTried) {
+          previewImg.dataset.fallbackTried = "1";
+          previewImg.src = `${staticUrl}?${cacheBust}`;
+          return;
+        }
+        previewImg.classList.remove("show");
+        hideRoiOverlay();
+        previewEmpty.style.display = "block";
+        previewEmpty.innerHTML = "预览帧已经到达 Linux 侧，但浏览器暂时没有成功加载图片。<br>请直接访问 <code>/api/preview</code> 检查原始图像响应。";
+        if (pendingPreviewStatus) {
+          const nextStatus = pendingPreviewStatus;
+          pendingPreviewStatus = null;
+          loadPreview(nextStatus);
+        }
+      };
+
+      previewImg.dataset.fallbackTried = "";
+      previewImg.src = `${apiUrl}?${cacheBust}${decodeSuffix}`;
+    }
+
+    function renderStatus(status) {
+      defaultState = status;
+      latestStatus = status;
+
+      const width = chooseWidth(status);
+      const height = chooseHeight(status);
+
+      setText("online-text", status.online ? "ONLINE" : "OFFLINE");
+      const alarmEnabled = Boolean((status.status_bits || 0) & 0x100);
+      const alarmActive = Boolean((status.status_bits || 0) & 0x20);
+      const alarmThreshold = currentParam(status, "current_alarm_count_threshold", "default_alarm_count_threshold", 256);
+      setText("alarm-state", alarmActive ? "ACTIVE" : (alarmEnabled ? "CLEAR" : "DISABLED"));
+      document.getElementById("alarm-card").classList.toggle("alarm-active", alarmActive);
+      previewBox.classList.toggle("alarm-active", alarmActive);
+      const alarmBanner = document.getElementById("alarm-banner");
+      alarmBanner.classList.toggle("active", alarmActive);
+      alarmBanner.textContent = alarmActive
+        ? `告警触发: bright_count ${status.bright_count || 0} >= threshold ${alarmThreshold}`
+        : `告警未触发: bright_count ${status.bright_count || 0} / threshold ${alarmThreshold}`;
+      setText("frame-id", String(chooseFrameId(status)));
+      setText("resolution", width && height ? `${width} x ${height}` : "0 x 0");
+      setText("active-pixel", String(chooseActivePixels(status)));
+      setText("bright-count", String(status.bright_count || 0));
+      setText("roi-sum", String(status.roi_sum || 0));
+
+      const pill = document.getElementById("status-pill");
+      pill.textContent = status.online ? "FPGA 遥测在线" : "FPGA 遥测离线";
+      pill.className = `status-pill${status.online ? "" : " offline"}`;
+
+      const metaLines = [
+        `FPGA 目标: ${status.fpga_target || "n/a"}`,
+        `上次接收: ${status.last_rx_time || "n/a"}`,
+        `上报源: ${(status.last_peer_ip || "n/a")}:${status.last_peer_port || 0}`,
+        `状态位: ${status.status_bits || 0}`,
+        `状态解析: ${status.status_text || "n/a"}`,
+        `运行参数: ROI=(${currentParam(status, "current_roi_x", "default_roi_x", 0)},${currentParam(status, "current_roi_y", "default_roi_y", 0)},${currentParam(status, "current_roi_w", "default_roi_w", 64)},${currentParam(status, "current_roi_h", "default_roi_h", 64)}) bright=${currentParam(status, "current_bright_threshold", "default_bright_threshold", 128)} alarm_count=${currentParam(status, "current_alarm_count_threshold", "default_alarm_count_threshold", 256)} tx_mode=${currentParam(status, "current_tx_mode", "default_tx_mode", 2)}`,
+        `累计包数: ${status.rx_packets || 0}`,
+        `累计错误: ${status.rx_errors || 0}`,
+        `离线超时: ${status.offline_timeout_ms || 0} ms`
+      ];
+      document.getElementById("status-meta").textContent = metaLines.join("\n");
+      document.getElementById("status-meta").textContent += `\ntelemetry: ${status.has_telemetry_packet ? "present" : "missing"}`;
+
+      const previewMeta = [
+        `预览帧ID: ${status.preview_frame_id || 0}`,
+        `格式: ${status.preview_format || "none"}`,
+        `尺寸: ${(status.preview_width || 0)} x ${(status.preview_height || 0)}`,
+        `预览字节数: ${status.preview_bytes || 0}`
+      ];
+      document.getElementById("preview-meta").textContent = previewMeta.join("，");
+
+      const previewMeta2 = [
+        `预览包数: ${status.preview_packets || 0}`,
+        `完成帧数: ${status.preview_frames_completed || 0}`,
+        `最近预览时间: ${status.preview_last_time || "n/a"}`
+      ];
+      document.getElementById("preview-meta-2").textContent = previewMeta2.join("，");
+
+      document.getElementById("preview-debug").textContent =
+        `decode=${currentPreviewDecode() || "default"}\n` +
+        `format=${status.preview_format || "none"}\n` +
+        `SOI=${status.preview_has_soi ? 1 : 0} EOI=${status.preview_has_eoi ? 1 : 0}\n` +
+        `HEAD=${status.preview_head_hex || ""}\n` +
+        `TAIL=${status.preview_tail_hex || ""}`;
+
+      document.getElementById("alarm-event-summary").textContent =
+        `累计告警事件: ${status.alarm_event_count || 0}`;
+      const alarmEventsNode = document.getElementById("alarm-events");
+      alarmEventsNode.innerHTML = "";
+      const alarmEvents = Array.isArray(status.alarm_events) ? status.alarm_events : [];
+      if (alarmEvents.length === 0) {
+        const row = document.createElement("tr");
+        const cell = document.createElement("td");
+        cell.colSpan = 6;
+        cell.textContent = "暂无告警事件";
+        row.appendChild(cell);
+        alarmEventsNode.appendChild(row);
+      } else {
+        alarmEvents.forEach((event) => {
+          const row = document.createElement("tr");
+          [
+            event.time || "n/a",
+            String(event.frame_id || 0),
+            `(${event.roi_x || 0},${event.roi_y || 0},${event.roi_w || 0},${event.roi_h || 0})`,
+            `${event.bright_count || 0}/${event.alarm_count_threshold || 0}`,
+            String(event.roi_sum || 0)
+          ].forEach((text) => {
+            const cell = document.createElement("td");
+            cell.textContent = text;
+            row.appendChild(cell);
+          });
+          const snapshotCell = document.createElement("td");
+          if (event.image_url) {
+            const link = document.createElement("a");
+            link.href = `${event.image_url}?ts=${Date.now()}`;
+            link.target = "_blank";
+            link.rel = "noopener";
+            link.textContent = "查看";
+            snapshotCell.appendChild(link);
+          } else {
+            snapshotCell.textContent = "-";
+          }
+          row.appendChild(snapshotCell);
+          alarmEventsNode.appendChild(row);
+        });
+      }
+
+      const events = document.getElementById("recent-events");
+      events.innerHTML = "";
+      const recentEvents = Array.isArray(status.recent_events) ? status.recent_events : [];
+      if (recentEvents.length === 0) {
+        const li = document.createElement("li");
+        li.textContent = "暂无事件";
+        events.appendChild(li);
+      } else {
+        recentEvents.forEach((item) => {
+          const li = document.createElement("li");
+          li.textContent = item;
+          events.appendChild(li);
+        });
+      }
+
+      if (!paramsEditPending && document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "SELECT") {
+        document.getElementById("roi_x").value = currentParam(status, "current_roi_x", "default_roi_x", 0);
+        document.getElementById("roi_y").value = currentParam(status, "current_roi_y", "default_roi_y", 0);
+        document.getElementById("roi_w").value = currentParam(status, "current_roi_w", "default_roi_w", 64);
+        document.getElementById("roi_h").value = currentParam(status, "current_roi_h", "default_roi_h", 64);
+        document.getElementById("bright_threshold").value = currentParam(status, "current_bright_threshold", "default_bright_threshold", 128);
+        document.getElementById("alarm_count_threshold").value = currentParam(status, "current_alarm_count_threshold", "default_alarm_count_threshold", 256);
+        document.getElementById("tx_mode").value = String(currentParam(status, "current_tx_mode", "default_tx_mode", 2));
+      }
+
+      if (paramsEditPending) {
+        updateRoiOverlayFromInputs();
+      } else {
+        updateRoiOverlay(status);
+      }
+      loadPreview(status);
+    }
+
+    async function fetchStatus() {
+      try {
+        const status = await fetchJson("/api/status");
+        renderStatus(status);
+      } catch (err) {
+        setText("online-text", "ERROR");
+        document.getElementById("status-pill").textContent = "状态读取失败";
+        document.getElementById("status-pill").className = "status-pill offline";
+        document.getElementById("status-meta").textContent = err.message;
+      }
+    }
+
+    const originalFetchStatus = fetchStatus;
+    fetchStatus = async function () {
+      if (statusRequestInFlight) {
+        return;
+      }
+      statusRequestInFlight = true;
+      try {
+        await originalFetchStatus();
+      } finally {
+        statusRequestInFlight = false;
+      }
+    };
+
+    previewBox.addEventListener("pointerdown", beginRoiDrag);
+    previewBox.addEventListener("pointermove", moveRoiDrag);
+    previewBox.addEventListener("pointerup", finishRoiDrag);
+    previewBox.addEventListener("pointercancel", () => {
+      roiDrag = null;
+      roiSelection.style.display = "none";
+    });
+    previewImg.addEventListener("dragstart", (event) => event.preventDefault());
+    window.addEventListener("resize", () => {
+      if (paramsEditPending) {
+        updateRoiOverlayFromInputs();
+      } else {
+        updateRoiOverlay(latestStatus);
+      }
+    });
+
+    ["roi_x", "roi_y", "roi_w", "roi_h", "bright_threshold", "alarm_count_threshold", "tx_mode"].forEach((id) => {
+      const markEdited = () => {
+        paramsEditPending = true;
+        updateRoiOverlayFromInputs();
+      };
+      document.getElementById(id).addEventListener("input", markEdited);
+      document.getElementById(id).addEventListener("change", markEdited);
+    });
+
+    let defaultState = {};
+    fetchStatus();
+    setInterval(fetchStatus, 100);
+  </script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "bind_ip": "0.0.0.0",
+  "bind_port": 9002,
+  "fpga_ip": "192.168.50.2",
+  "fpga_port": 9003,
+  "http_bind_ip": "0.0.0.0",
+  "http_port": 5000,
+  "static_dir": "../web",
+  "log_file": "../logs/edge_node_service.log",
+  "offline_timeout_ms": 5000,
+  "config_reload_sec": 2,
+  "socket_timeout_ms": 500,
+  "auto_initialize": true,
+  "auto_start_capture": true,
+  "initial_seq": 1,
+  "default_roi_x": 0,
+  "default_roi_y": 0,
+  "default_roi_w": 64,
+  "default_roi_h": 64,
+  "default_bright_threshold": 128,
+  "default_alarm_count_threshold": 256,
+  "default_tx_mode": 2
+}

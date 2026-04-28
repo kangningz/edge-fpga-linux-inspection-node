@@ -1,0 +1,130 @@
+FPGA -> Raspberry Pi 5
+
+固定 32 字节：
+
+Byte 0   : magic0        = 0x45   // 'E'
+Byte 1   : magic1        = 0x56   // 'V'
+Byte 2   : version       = 0x01
+Byte 3   : msg_type      // 0x01=frame_stats, 0x02=status_snapshot
+
+Byte 4   : frame_id[15:8]
+Byte 5   : frame_id[7:0]
+
+Byte 6   : status_bits[15:8]
+Byte 7   : status_bits[7:0]
+
+Byte 8   : timestamp_low[31:24]
+Byte 9   : timestamp_low[23:16]
+Byte 10  : timestamp_low[15:8]
+Byte 11  : timestamp_low[7:0]
+
+Byte 12  : frame_width[15:8]
+Byte 13  : frame_width[7:0]
+
+Byte 14  : frame_height[15:8]
+Byte 15  : frame_height[7:0]
+
+Byte 16  : active_pixel_count[31:24]
+Byte 17  : active_pixel_count[23:16]
+Byte 18  : active_pixel_count[15:8]
+Byte 19  : active_pixel_count[7:0]
+
+Byte 20  : roi_sum[31:24]
+Byte 21  : roi_sum[23:16]
+Byte 22  : roi_sum[15:8]
+Byte 23  : roi_sum[7:0]
+
+Byte 24  : bright_count[15:8]
+Byte 25  : bright_count[7:0]
+
+Byte 26  : error_code[15:8]
+Byte 27  : error_code[7:0]
+
+Byte 28  : reserved
+Byte 29  : reserved
+Byte 30  : reserved
+
+Byte 31  : checksum      // XOR(Byte0~Byte30)
+
+
+status_bits:
+
+bit0  cam_init_done
+bit1  frame_locked
+bit2  fifo_overflow
+bit3  udp_tx_busy_or_drop
+bit4  capture_enable
+bit5  alarm_active
+bit6  phy_init_done
+bit7  last_cmd_error
+bit8~bit15 reserved
+
+
+Pi 5 -> FPGA
+
+固定 20 字节：
+
+Byte 0   : magic0      = 0x43   // 'C'
+Byte 1   : magic1      = 0x4D   // 'M'
+Byte 2   : version     = 0x01
+Byte 3   : cmd
+
+Byte 4   : seq[15:8]
+Byte 5   : seq[7:0]
+
+Byte 6   : addr[15:8]
+Byte 7   : addr[7:0]
+
+Byte 8   : data0[31:24]
+Byte 9   : data0[23:16]
+Byte 10  : data0[15:8]
+Byte 11  : data0[7:0]
+
+Byte 12  : data1[31:24]
+Byte 13  : data1[23:16]
+Byte 14  : data1[15:8]
+Byte 15  : data1[7:0]
+
+Byte 16  : reserved
+Byte 17  : reserved
+Byte 18  : reserved
+
+Byte 19  : checksum    // XOR(Byte0~Byte18)
+
+
+命令码定义：
+
+0x01  WRITE_REG
+0x02  READ_REG
+0x03  START_CAPTURE
+0x04  STOP_CAPTURE
+0x05  QUERY_STATUS
+0x06  CLEAR_ERROR
+0x07  BUZZER_ON
+0x08  BUZZER_OFF
+
+
+FPGA 内部寄存器地址映射：
+
+0x0000  CTRL
+0x0001  STATUS
+0x0010  ROI_X
+0x0011  ROI_Y
+0x0012  ROI_W
+0x0013  ROI_H
+0x0014  BRIGHT_THRESHOLD
+0x0015  TX_MODE
+
+
+CTRL:
+
+bit0  capture_enable
+bit1  alarm_enable
+bit2  debug_uart_enable
+
+
+TX_MODE:
+
+0 = frame_stats only
+1 = status shadow only
+2 = both

@@ -1,0 +1,15 @@
+[Unit]
+Description=FPGA Edge Vision Node Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/edge_node_service
+ExecStart=/home/pi/edge_node_service/build/edge_node_service /home/pi/edge_node_service/config/config.json
+Restart=always
+RestartSec=2
+User=pi
+
+[Install]
+WantedBy=multi-user.target

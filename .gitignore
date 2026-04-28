@@ -1,0 +1,40 @@
+# Personal/private notes
+docs/PROBLEM_SUMMARY.md
+
+# Third-party datasheets / local references
+OV2640/
+工程总体目录.png
+
+# Build outputs
+build/
+build_*/
+edge_node_service/build*/
+edge_node_service/logs/
+logs/
+
+# Vivado generated files
+.Xil/
+*.jou
+*.log
+*.str
+*.bit
+*.bin
+*.ltx
+*.dcp
+*.rpt
+*.wdb
+*.wcfg
+*.vcd
+*.pb
+*.cache/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+*.srcs/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
