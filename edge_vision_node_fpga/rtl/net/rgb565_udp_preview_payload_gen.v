@@ -1,5 +1,15 @@
 `timescale 1ns / 1ps
 
+// Build preview UDP payloads from the DDR3 readback pixel stream.
+//
+// Payload format:
+//   16-byte preview chunk header
+//   then chunk data from a logical byte stream:
+//     [0:3] = frame width/height metadata
+//     [4:]  = RGB565 pixel bytes
+//
+// Large frames are split into chunks so each UDP packet stays below MTU.
+
 module rgb565_udp_preview_payload_gen #(
     parameter integer FRAME_WIDTH        = 800,
     parameter integer FRAME_HEIGHT       = 600,
@@ -110,6 +120,8 @@ module rgb565_udp_preview_payload_gen #(
             preview_packet_done <= 1'b0;
             preview_frame_done  <= 1'b0;
             if (frame_ready) begin
+                // If a new DDR3 frame completes while UDP is busy, remember
+                // that at least one fresh frame is pending.
                 frame_pending <= 1'b1;
             end
 
@@ -125,11 +137,15 @@ module rgb565_udp_preview_payload_gen #(
                 end
 
                 S_RESTART: begin
+                    // Restart the DDR3 readout at the beginning of each
+                    // preview frame before filling the first UDP chunk.
                     rd_frame_restart <= 1'b1;
                     state            <= S_PREPARE;
                 end
 
                 S_PREPARE: begin
+                    // Fill the fixed 16-byte chunk header. The flags byte marks
+                    // first and last chunks so Linux can reassemble cleanly.
                     remaining_stream  = STREAM_TOTAL_BYTES - frame_offset;
                     chunk_size_calc   = min16(remaining_stream, CHUNK_DATA_BYTES);
                     chunk_data_len    <= chunk_size_calc;
@@ -166,6 +182,8 @@ module rgb565_udp_preview_payload_gen #(
                     end else begin
                         stream_pos = frame_offset + (payload_fill_idx - 16);
                         if (stream_pos < 4) begin
+                            // First four stream bytes carry width/height before
+                            // raw pixels. This lets Linux validate frame size.
                             payload_mem[payload_fill_idx] <= meta_byte_at(stream_pos[1:0]);
                             payload_fill_idx <= payload_fill_idx + 1'b1;
                         end else if (low_byte_pending) begin
@@ -173,6 +191,8 @@ module rgb565_udp_preview_payload_gen #(
                             payload_fill_idx <= payload_fill_idx + 1'b1;
                             low_byte_pending <= 1'b0;
                         end else if (rd_pending) begin
+                            // DDR3 FIFO returns one RGB565 pixel. The service
+                            // currently expects low byte then high byte.
                             pixel_hold <= rd_pixel;
                             payload_mem[payload_fill_idx] <= rd_pixel[7:0];
                             payload_fill_idx <= payload_fill_idx + 1'b1;
@@ -187,6 +207,7 @@ module rgb565_udp_preview_payload_gen #(
 
                 S_LAUNCH: begin
                     if (!tx_busy) begin
+                        // Hand the prepared payload to the shared UDP TX block.
                         tx_en_pulse      <= 1'b1;
                         payload_send_idx <= 16'd0;
                         state            <= S_WAIT_TX;

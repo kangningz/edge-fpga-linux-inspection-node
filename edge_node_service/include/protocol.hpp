@@ -8,8 +8,14 @@
 
 namespace protocol {
 
+// FPGA -> Linux telemetry packet. The RTL emits this compact 32-byte packet
+// once per frame so Linux can update status without parsing the preview image.
 constexpr std::size_t kFrameStatsPacketSize = 32;
+// Linux -> FPGA command packet. Register writes and simple controls share this
+// fixed layout, which keeps the FPGA UDP command parser small.
 constexpr std::size_t kCommandPacketSize = 20;
+// FPGA -> Linux preview chunk. Large RGB565/JPEG frames are split into chunks
+// and reassembled by the service before being exposed through /api/preview.
 constexpr std::size_t kPreviewHeaderSize = 16;
 constexpr std::uint8_t kPreviewMsgTypeJpeg = 0x10;
 constexpr std::uint8_t kPreviewMsgTypeRgb565 = 0x12;
@@ -57,6 +63,8 @@ struct FrameStatsPacket {
     std::uint8_t checksum = 0;
 };
 
+// Preview packets carry a pointer into the received UDP buffer. The service
+// must copy the payload before the receive buffer is reused by the next packet.
 struct PreviewChunkPacket {
     std::uint8_t magic0 = 0;
     std::uint8_t magic1 = 0;
@@ -103,6 +111,8 @@ inline std::uint8_t xor_checksum(const std::uint8_t* data, std::size_t len) {
     return value;
 }
 
+// Validate and decode the 32-byte FPGA status packet. Multi-byte fields are
+// big-endian because the Verilog packet formatter writes network-order bytes.
 inline bool parse_frame_stats_packet(
     const std::uint8_t* data,
     std::size_t len,
@@ -141,6 +151,8 @@ inline bool parse_frame_stats_packet(
     return true;
 }
 
+// Decode one preview chunk. The first/last chunk flags let the service reset
+// assembly cleanly if a frame is dropped or arrives out of order.
 inline bool parse_preview_chunk_packet(
     const std::uint8_t* data,
     std::size_t len,
@@ -174,6 +186,8 @@ inline bool parse_preview_chunk_packet(
     return true;
 }
 
+// Build the UDP command payload sent to the FPGA command parser. For register
+// writes, addr selects the FPGA register and data0 carries the new value.
 inline std::vector<std::uint8_t> build_command_packet(
     CommandCode cmd,
     std::uint16_t seq,
@@ -207,6 +221,8 @@ inline const char* command_name(CommandCode code) {
     }
 }
 
+// Human-readable status text is useful for Web display and interview/demo
+// debugging because the raw status_bits field is otherwise opaque.
 inline std::string status_bits_text(std::uint16_t status_bits) {
     std::ostringstream oss;
     oss << "cam_init_done=" << ((status_bits >> 0U) & 0x1U)

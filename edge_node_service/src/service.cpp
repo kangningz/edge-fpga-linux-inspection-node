@@ -199,6 +199,8 @@ std::vector<std::uint8_t> rgb565_to_bmp(
     write_le16(&bmp[28], 24U);
     write_le32(&bmp[34], pixel_bytes);
 
+    // BMP stores rows bottom-up and uses BGR byte order, so the service
+    // flips the FPGA RGB565 frame vertically while expanding it to 24-bit BGR.
     for (std::uint32_t y = 0; y < height; ++y) {
         const std::uint32_t src_y = height - 1U - y;
         const std::uint32_t src_row_off = src_y * static_cast<std::uint32_t>(width) * 2U;
@@ -435,6 +437,8 @@ bool EdgeNodeService::start() {
     }
 
     stop_requested_.store(false);
+    // The service is split into three long-running workers:
+    // UDP receive, HTTP/Web API, and watchdog/config reload.
     rx_thread_ = std::thread(&EdgeNodeService::rx_loop, this);
     watchdog_thread_ = std::thread(&EdgeNodeService::watchdog_loop, this);
     http_thread_ = std::thread(&EdgeNodeService::http_loop, this);
@@ -599,6 +603,9 @@ void EdgeNodeService::rx_loop() {
 
         protocol::FrameStatsPacket packet;
         std::string parse_err;
+        // First try the compact 32-byte telemetry format. These packets update
+        // system status, ROI statistics, and alarm state; they are independent
+        // from the larger image-preview chunks below.
         if (protocol::parse_frame_stats_packet(buffer.data(), static_cast<std::size_t>(received), packet, parse_err)) {
             RuntimeParams params_snapshot;
             {
@@ -624,6 +631,8 @@ void EdgeNodeService::rx_loop() {
             bool should_record_alarm = false;
             {
                 std::lock_guard<std::mutex> alarm_lock(alarm_mutex_);
+                // Record only the rising edge of alarm_active. This prevents
+                // one sustained alarm condition from flooding the event list.
                 should_record_alarm = alarm_active && !alarm_state_.last_alarm_active;
                 alarm_state_.last_alarm_active = alarm_active;
             }
@@ -645,6 +654,9 @@ void EdgeNodeService::rx_loop() {
                 std::string snapshot_ext = ".bin";
                 {
                     std::lock_guard<std::mutex> preview_lock(preview_mutex_);
+                    // Alarm events reuse the latest assembled preview frame as
+                    // a snapshot. The telemetry packet and preview frame may be
+                    // from nearby, not necessarily identical, frame IDs.
                     if (preview_.available && !preview_.latest_image.empty()) {
                         snapshot_image = preview_.latest_image;
                         if (preview_.latest_content_type == "image/bmp") {
@@ -706,6 +718,8 @@ void EdgeNodeService::rx_loop() {
 
         protocol::PreviewChunkPacket preview_packet;
         std::string preview_err;
+        // If the datagram is not telemetry, treat it as a preview chunk. FPGA
+        // splits large RGB565/JPEG frames into ordered chunks to fit UDP MTU.
         if (protocol::parse_preview_chunk_packet(buffer.data(), static_cast<std::size_t>(received), preview_packet, preview_err)) {
             {
                 std::lock_guard<std::mutex> lock(state_mutex_);
@@ -734,6 +748,8 @@ void EdgeNodeService::rx_loop() {
                 ++preview_.preview_packets;
 
                 if (preview_packet.flags & 0x01U) {
+                    // Start-of-frame chunk resets assembly. Any partial frame
+                    // is discarded because UDP does not guarantee delivery.
                     preview_assembly_.active = true;
                     preview_assembly_.frame_id = preview_packet.frame_id;
                     preview_assembly_.msg_type = preview_packet.msg_type;
@@ -760,6 +776,8 @@ void EdgeNodeService::rx_loop() {
 
                         if (preview_assembly_.msg_type == protocol::kPreviewMsgTypeRgb565) {
                             if (completed_payload.size() >= 4) {
+                                // RGB565 preview payload starts with width and
+                                // height, then width*height*2 raw pixel bytes.
                                 completed_width = protocol::read_be16(completed_payload.data());
                                 completed_height = protocol::read_be16(completed_payload.data() + 2);
                                 const std::size_t expected_bytes =
@@ -814,6 +832,8 @@ void EdgeNodeService::rx_loop() {
                         preview_assembly_.active = false;
                     }
                 } else if (!(preview_packet.flags & 0x01U)) {
+                    // Out-of-order or missing chunks are not recoverable with
+                    // this simple protocol, so drop the partial frame.
                     preview_assembly_.active = false;
                     preview_assembly_.buffer.clear();
                 }
@@ -972,6 +992,8 @@ bool EdgeNodeService::send_command_packet(
     std::lock_guard<std::mutex> send_lock(send_mutex_);
     std::lock_guard<std::mutex> config_lock(config_mutex_);
 
+    // All FPGA controls use the same UDP command packet. Simple commands leave
+    // addr/data zero; register writes encode the target register in addr.
     const auto packet = protocol::build_command_packet(code, next_seq_, addr, data0, data1);
 
     sockaddr_in target{};
@@ -1097,6 +1119,8 @@ bool EdgeNodeService::apply_runtime_params(
     std::uint32_t alarm_count_threshold,
     std::uint32_t tx_mode,
     std::string& err) {
+    // Keep parameter writes ordered. The FPGA register bank mirrors these
+    // values and the camera-domain logic latches them cleanly at frame start.
     if (!write_register(protocol::RegRoiX, roi_x, err)) {
         return false;
     }
@@ -1151,6 +1175,9 @@ std::string EdgeNodeService::status_json() const {
     bool preview_has_soi = false;
     bool preview_has_eoi = false;
     {
+        // Copy shared state under locks, then build JSON from local snapshots.
+        // This keeps HTTP response generation from blocking UDP receive for too
+        // long while still returning a consistent view to the Web page.
         std::lock_guard<std::mutex> state_lock(state_mutex_);
         state_copy = state_;
     }

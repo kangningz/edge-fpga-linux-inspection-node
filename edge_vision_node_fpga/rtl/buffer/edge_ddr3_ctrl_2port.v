@@ -1,5 +1,17 @@
 `timescale 1ns / 1ps
 
+// Two-port-style wrapper around the MIG AXI interface.
+//
+// Write side:
+//   camera/packing logic writes 16-bit RGB565 pixels into wr_ddr3_fifo.
+//   This module reads wider 128-bit beats from the FIFO and writes DDR3 bursts.
+//
+// Read side:
+//   preview logic requests pixels from rdfifo.
+//   This module reads DDR3 bursts and fills rdfifo with 16-bit pixels.
+//
+// The FIFO wrappers isolate external clocks from the MIG ui_clk domain.
+
 module edge_ddr3_ctrl_2port (
     input           ddr3_clk200m,
     input           ddr3_rst_n,
@@ -122,6 +134,8 @@ module edge_ddr3_ctrl_2port (
     assign ui_rst = ui_clk_sync_rst;
     assign device_temp = 12'h000;
 
+    // Camera/write side CDC: 16-bit pixels enter in wrfifo_clk and are widened
+    // by the FIFO to 128-bit words for efficient AXI writes.
     wr_ddr3_fifo u_wr_ddr3_fifo (
         .rst           (wrfifo_clr),
         .wr_clk        (wrfifo_clk),
@@ -140,6 +154,8 @@ module edge_ddr3_ctrl_2port (
 
     wire [8:0] rdfifo_rd_cnt_int;
 
+    // Preview/read side CDC: 128-bit MIG read data is narrowed by the FIFO back
+    // to 16-bit RGB565 pixels for the UDP preview packetizer.
     rd_ddr3_fifo u_rd_ddr3_fifo (
         .rst           (rdfifo_clr),
         .wr_clk        (ui_clk),
@@ -158,6 +174,8 @@ module edge_ddr3_ctrl_2port (
     assign rdfifo_rd_cnt_int = {3'b000, rdfifo_wr_cnt};
     assign rdfifo_rd_cnt     = rdfifo_rd_cnt_int;
 
+    // Clear pulses originate outside ui_clk. Convert them into ui_clk pulses so
+    // the AXI address generator can restart frame write/read ranges safely.
     pulse_sync_toggle u_wrfifo_clr_to_ui (
         .src_clk   (wrfifo_clk),
         .src_rst_n (ddr3_rst_n),

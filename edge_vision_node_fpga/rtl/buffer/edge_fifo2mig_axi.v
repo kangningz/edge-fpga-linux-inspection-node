@@ -1,5 +1,11 @@
 `timescale 1ns / 1ps
 
+// AXI burst scheduler between width-conversion FIFOs and the DDR3 MIG.
+//
+// The key rule is conservative: only start a write burst when enough FIFO data
+// is already buffered for the whole burst. This prevents invalid pixels from
+// being pushed into DDR3 if the camera-side FIFO runs dry mid-burst.
+
 module edge_fifo2mig_axi #(
     parameter AXI_ID  = 4'b0000,
     parameter AXI_LEN = 8'd31
@@ -88,6 +94,8 @@ module edge_fifo2mig_axi #(
     (* ASYNC_REG = "TRUE" *) reg rd_fifo_rst_busy_ff0;
     (* ASYNC_REG = "TRUE" *) reg rd_fifo_rst_busy_ff1;
     reg rd_fifo_rst_busy_ui;
+    // Write request waits for one full burst. Read request waits until the read
+    // FIFO has room for one full burst.
     wire wr_ddr3_req = (wr_fifo_rst_busy_ui == 1'b0) && (wr_fifo_rd_cnt >= wr_req_cnt_thresh);
     wire rd_ddr3_req = (rd_fifo_rst_busy_ui == 1'b0) && (rd_fifo_wr_cnt <= rd_req_cnt_thresh);
 
@@ -119,6 +127,8 @@ module edge_fifo2mig_axi #(
     assign m_axi_arlen   = AXI_LEN;
     assign m_axi_rready  = ~rd_fifo_alfull;
 
+    // AXI handshakes directly drive FIFO read/write enables. Data only moves
+    // when both sides are ready.
     assign wr_fifo_rdreq  = m_axi_wvalid && m_axi_wready;
     assign rd_fifo_wrreq  = m_axi_rvalid && m_axi_rready;
     assign rd_fifo_wrdata = m_axi_rdata;
@@ -228,6 +238,8 @@ module edge_fifo2mig_axi #(
         if (ui_clk_sync_rst) begin
             wr_rd_poll <= 1'b0;
         end else if (curr_state == S_ARB) begin
+            // Simple round-robin preference between read and write bursts when
+            // both sides are ready.
             wr_rd_poll <= ~wr_rd_poll;
         end
     end

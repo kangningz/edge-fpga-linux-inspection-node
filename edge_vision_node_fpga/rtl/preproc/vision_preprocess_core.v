@@ -1,5 +1,13 @@
 `timescale 1ns / 1ps
 
+// Per-frame statistics and alarm generation in the camera_pclk domain.
+//
+// This module does not modify the pixel stream. It observes capture timing and
+// produces one compact stats record at frame_end:
+// {frame_id, timestamp, width, height, active_pixel_count, roi_sum, bright_count}
+//
+// Linux receives this record through the stats FIFO and UDP telemetry path.
+
 module vision_preprocess_core #(
     parameter [15:0] REPORT_WIDTH = 16'd800,
     parameter [15:0] REPORT_HEIGHT = 16'd600,
@@ -46,6 +54,8 @@ module vision_preprocess_core #(
     reg [31:0] roi_sum_cur;
     reg [15:0] bright_cnt_cur;
 
+    // Extend by one bit before adding x/y + width/height so ROI end comparison
+    // does not wrap when the ROI approaches the frame boundary.
     wire [11:0] roi_x_end = {1'b0, roi_x} + {1'b0, roi_w};
     wire [11:0] roi_y_end = {1'b0, roi_y} + {1'b0, roi_h};
     wire [15:0] line_width_pixels =
@@ -84,6 +94,8 @@ module vision_preprocess_core #(
                 alarm_active       <= 1'b0;
             end
 
+            // Start each frame with fresh accumulators. The reported values are
+            // committed only at frame_end, so Linux always sees full-frame stats.
             if (frame_start) begin
                 line_cnt_cur         <= 16'd0;
                 line_width_last      <= 16'd0;
@@ -102,6 +114,9 @@ module vision_preprocess_core #(
                 active_pixel_cnt_cur <= active_pixel_cnt_cur + 1'b1;
 
                 if (in_roi) begin
+                    // pix_data is the byte-level brightness proxy used by this
+                    // lightweight rule. For RGB565 input, BYTES_PER_PIXEL=2 so
+                    // the final active pixel count is divided by two below.
                     roi_sum_cur <= roi_sum_cur + pix_data;
                     if (pix_data >= bright_threshold) begin
                         bright_cnt_cur <= bright_cnt_cur + 1'b1;
@@ -118,10 +133,14 @@ module vision_preprocess_core #(
 
             if (frame_end && capture_enable) begin
                 frame_id <= frame_id + 1'b1;
+                // alarm_enable gates the result. This lets Linux disable the
+                // buzzer/alarm path without changing the statistics pipeline.
                 alarm_active <= alarm_enable &&
                                 (bright_cnt_cur >= alarm_count_threshold);
 
                 if (!stats_full) begin
+                    // stats_din is intentionally fixed-width so the downstream
+                    // async FIFO and packet formatter stay simple.
                     stats_wr_en <= 1'b1;
                     stats_din   <= {
                         frame_id + 1'b1,

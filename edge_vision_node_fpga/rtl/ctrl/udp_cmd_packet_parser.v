@@ -1,5 +1,11 @@
 `timescale 1ns / 1ps
 
+// Decode the 20-byte Linux -> FPGA command payload.
+//
+// The Ethernet/UDP RX block already filters MAC/IP/UDP. This parser only checks
+// the application payload magic/version/checksum and emits one-cycle cmd_valid_o
+// pulses for valid commands.
+
 module udp_cmd_packet_parser (
     input  wire        clk,
     input  wire        rst_n,
@@ -35,12 +41,16 @@ module udp_cmd_packet_parser (
         end else begin
             cmd_valid_o <= 1'b0;
 
+            // Store at most one fixed-size command. Longer payloads will fail
+            // length validation at packet end.
             if (payload_valid_i && byte_cnt < 5'd20) begin
                 byte_buf[byte_cnt] <= payload_dat_i;
                 byte_cnt <= byte_cnt + 1'b1;
             end
 
             if (one_pkt_done_i) begin
+                // XOR checksum is intentionally simple so it maps to small RTL
+                // and matches protocol::build_command_packet on Linux.
                 checksum_calc = 8'h00;
                 for (i = 0; i < 19; i = i + 1) begin
                     checksum_calc = checksum_calc ^ byte_buf[i];
@@ -52,6 +62,7 @@ module udp_cmd_packet_parser (
                     byte_buf[1] == 8'h4D &&
                     byte_buf[2] == 8'h01 &&
                     checksum_calc == byte_buf[19]) begin
+                    // Multi-byte fields are big-endian/network order.
                     cmd_valid_o <= 1'b1;
                     cmd_code_o  <= byte_buf[3];
                     cmd_seq_o   <= {byte_buf[4], byte_buf[5]};

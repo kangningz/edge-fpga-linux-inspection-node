@@ -1,5 +1,18 @@
 `timescale 1ns / 1ps
 
+// Top-level integration for the edge inspection node.
+//
+// Main clock domains:
+// - sys_clk: board-level control, camera init, LEDs.
+// - camera_pclk: OV2640 pixel stream and ROI statistics.
+// - eth_clk125m: UDP transmit, telemetry packetization, register bank.
+// - rgmii_rx_clk_phase: phase-shifted RGMII receive sampling clock.
+//
+// Main data paths:
+// - Preview: camera -> DDR3 framebuffer -> RGB565 UDP chunks -> Linux.
+// - Telemetry: camera -> ROI stats -> async FIFO -> 32-byte status UDP.
+// - Control: Linux UDP command -> RGMII RX -> command FIFO -> register bank.
+
 module top_ov2640_ddr3_udp_preview (
     input  wire FPGA_CLK,
     input  wire S0,
@@ -63,6 +76,9 @@ module top_ov2640_ddr3_udp_preview (
     wire rst_n_sys;
     wire cam_xclk_int;
 
+    // Generate the local control clock and the OV2640 XCLK. The sensor returns
+    // its own camera_pclk, so pixel processing remains in the sensor clock
+    // domain instead of sys_clk.
     clk_rst_mgr #(
         .SYS_CLK_HZ  (50_000_000),
         .CAM_XCLK_HZ (25_000_000)
@@ -77,6 +93,7 @@ module top_ov2640_ddr3_udp_preview (
 
     wire ddr3_clk200m;
     wire ddr3_clk_locked;
+    // DDR3 MIG uses a dedicated 200 MHz reference clock.
     clk_wiz_ddr3_200m u_clk_wiz_ddr3_200m (
         .clk_in1 (FPGA_CLK),
         .reset   (~manual_rst_n),
@@ -86,6 +103,7 @@ module top_ov2640_ddr3_udp_preview (
 
     wire eth_clk125m;
     wire eth_clk_locked;
+    // Ethernet TX, telemetry formatting, and register control run at 125 MHz.
     clk_wiz_eth125m u_clk_wiz_eth125m (
         .clk_in1 (FPGA_CLK),
         .reset   (~manual_rst_n),
@@ -208,6 +226,8 @@ module top_ov2640_ddr3_udp_preview (
     wire [31:0] cmd_data0_eth;
     wire [31:0] cmd_data1_eth;
 
+    // Runtime register bank. Linux writes these registers through UDP command
+    // packets; the outputs are later synchronized into the camera clock domain.
     vision_reg_bank u_vision_reg_bank (
         .clk              (eth_clk125m),
         .rst_n            (manual_rst_n & eth_clk_locked),
@@ -251,6 +271,8 @@ module top_ov2640_ddr3_udp_preview (
     reg [15:0] alarm_count_threshold_cam_ff1;
     wire       clear_error_cam_pulse;
 
+    // clear_error is a single pulse in eth_clk125m; use a pulse synchronizer so
+    // the camera-domain statistics and buzzer logic see exactly one pulse.
     pulse_sync_toggle u_clear_error_to_cam (
         .src_clk   (eth_clk125m),
         .src_rst_n (manual_rst_n & eth_clk_locked),
@@ -260,6 +282,9 @@ module top_ov2640_ddr3_udp_preview (
         .dst_pulse (clear_error_cam_pulse)
     );
 
+    // Double-register runtime parameters into camera_pclk before they feed the
+    // ROI/statistics core. This avoids direct eth_clk125m -> camera_pclk timing
+    // paths and prevents half-synchronized multi-bit bus values.
     always @(posedge camera_pclk or negedge rst_n_sys) begin
         if (!rst_n_sys) begin
             capture_enable_cam_ff0    <= 1'b1;
@@ -304,6 +329,9 @@ module top_ov2640_ddr3_udp_preview (
     wire        stats_fifo_overflow_dbg;
     wire        alarm_active_cam;
 
+    // Per-frame lightweight vision processing. It counts valid pixels, sums ROI
+    // brightness, counts pixels above bright_threshold, and emits one stats
+    // record at frame_end.
     vision_preprocess_core #(
         .REPORT_WIDTH          (FRAME_WIDTH),
         .REPORT_HEIGHT         (FRAME_HEIGHT),
@@ -634,6 +662,8 @@ module top_ov2640_ddr3_udp_preview (
     end
     wire rst_rx_n = rst_rx_sync_ff[2];
 
+    // RGMII RX requires phase-adjusted sampling. Without this MMCM path, bytes
+    // may be captured with the wrong phase and UDP command parsing will fail.
     wire       gmii_rx_clk;
     wire [7:0] gmii_rxd;
     wire       gmii_rxdv;
@@ -706,6 +736,8 @@ module top_ov2640_ddr3_udp_preview (
     wire        cmd_fifo_empty;
     wire [103:0] cmd_fifo_dout;
     reg         cmd_fifo_rd_en;
+    // Command parser runs in the RGMII RX clock domain; the register bank runs
+    // in eth_clk125m, so commands cross through a small async FIFO.
     cmd_async_fifo #(
         .DATA_WIDTH(104),
         .FIFO_DEPTH(16)
@@ -763,6 +795,8 @@ module top_ov2640_ddr3_udp_preview (
     wire [15:0] udp_data_length;
     wire [7:0]  udp_payload_dat;
 
+    // Preview packets and telemetry packets share one UDP transmitter. Telemetry
+    // has priority so status updates are not starved by large preview frames.
     rgb565_udp_preview_payload_gen #(
         .FRAME_WIDTH      (FRAME_WIDTH),
         .FRAME_HEIGHT     (FRAME_HEIGHT),
@@ -808,6 +842,8 @@ module top_ov2640_ddr3_udp_preview (
 
     wire [15:0] status_bits;
     wire [15:0] error_code;
+    // status_bits is the hardware contract consumed by protocol.hpp and the Web
+    // dashboard. Keep this mapping aligned with docs and Linux parser output.
     assign status_bits = {
         dbg_stats_wr_seen_eth,
         dbg_pix_valid_seen_eth,
