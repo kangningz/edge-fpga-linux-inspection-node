@@ -1,13 +1,13 @@
 `timescale 1ns / 1ps
-
-// AXI burst scheduler between width-conversion FIFOs and the DDR3 MIG.
-//
-// The key rule is conservative: only start a write burst when enough FIFO data
-// is already buffered for the whole burst. This prevents invalid pixels from
-// being pushed into DDR3 if the camera-side FIFO runs dry mid-burst.
+// FIFO 到 MIG AXI 写通道桥接模块。
+// 它把连续像素数据整理成 AXI 写突发，处理地址推进、写响应和背压。
 
 module edge_fifo2mig_axi #(
+
+    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
     parameter AXI_ID  = 4'b0000,
+
+    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
     parameter AXI_LEN = 8'd31
 )(
     input               wr_addr_clr,
@@ -74,8 +74,11 @@ module edge_fifo2mig_axi #(
     input               m_axi_rlast,
     input               m_axi_rvalid,
     output              m_axi_rready
+
+// 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
 
+    // 本地常量定义状态编码、计数上限或协议字段，避免魔法数字散落在逻辑中。
     localparam S_IDLE    = 7'b0000001;
     localparam S_ARB     = 7'b0000010;
     localparam S_WR_ADDR = 7'b0000100;
@@ -84,18 +87,19 @@ module edge_fifo2mig_axi #(
     localparam S_RD_ADDR = 7'b0100000;
     localparam S_RD_RESP = 7'b1000000;
 
-    // AXI LEN uses "beats - 1", so a 32-beat burst needs 32 words buffered.
+    // wire 信号承载组合逻辑结果或子模块之间的连接。
     wire [5:0] burst_beats       = AXI_LEN[5:0] + 6'd1;
     wire [5:0] wr_req_cnt_thresh = burst_beats;
     wire [5:0] rd_req_cnt_thresh = burst_beats;
     (* ASYNC_REG = "TRUE" *) reg wr_fifo_rst_busy_ff0;
     (* ASYNC_REG = "TRUE" *) reg wr_fifo_rst_busy_ff1;
+
+    // reg 信号保存跨周期状态、计数器、握手标志和流水线寄存结果。
     reg wr_fifo_rst_busy_ui;
     (* ASYNC_REG = "TRUE" *) reg rd_fifo_rst_busy_ff0;
     (* ASYNC_REG = "TRUE" *) reg rd_fifo_rst_busy_ff1;
     reg rd_fifo_rst_busy_ui;
-    // Write request waits for one full burst. Read request waits until the read
-    // FIFO has room for one full burst.
+
     wire wr_ddr3_req = (wr_fifo_rst_busy_ui == 1'b0) && (wr_fifo_rd_cnt >= wr_req_cnt_thresh);
     wire rd_ddr3_req = (rd_fifo_rst_busy_ui == 1'b0) && (rd_fifo_wr_cnt <= rd_req_cnt_thresh);
 
@@ -104,7 +108,10 @@ module edge_fifo2mig_axi #(
     reg       wr_rd_poll;
     reg [7:0] wr_data_cnt;
 
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign m_axi_awid    = AXI_ID;
+
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign m_axi_awsize  = 3'b100;
     assign m_axi_awburst = 2'b01;
     assign m_axi_awlock  = 1'b0;
@@ -127,12 +134,11 @@ module edge_fifo2mig_axi #(
     assign m_axi_arlen   = AXI_LEN;
     assign m_axi_rready  = ~rd_fifo_alfull;
 
-    // AXI handshakes directly drive FIFO read/write enables. Data only moves
-    // when both sides are ready.
     assign wr_fifo_rdreq  = m_axi_wvalid && m_axi_wready;
     assign rd_fifo_wrreq  = m_axi_rvalid && m_axi_rready;
     assign rd_fifo_wrdata = m_axi_rdata;
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge ui_clk or posedge ui_clk_sync_rst) begin
         if (ui_clk_sync_rst) begin
             wr_fifo_rst_busy_ff0 <= 1'b1;
@@ -151,6 +157,7 @@ module edge_fifo2mig_axi #(
         end
     end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge ui_clk or posedge ui_clk_sync_rst) begin
         if (ui_clk_sync_rst) begin
             m_axi_awaddr <= wr_addr_begin[29:0];
@@ -164,6 +171,7 @@ module edge_fifo2mig_axi #(
         end
     end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge ui_clk or posedge ui_clk_sync_rst) begin
         if (ui_clk_sync_rst) begin
             m_axi_awvalid <= 1'b0;
@@ -174,20 +182,21 @@ module edge_fifo2mig_axi #(
         end
     end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge ui_clk or posedge ui_clk_sync_rst) begin
         if (ui_clk_sync_rst) begin
             m_axi_wvalid <= 1'b0;
         end else if ((curr_state == S_WR_DATA) && m_axi_wready && m_axi_wvalid && m_axi_wlast) begin
             m_axi_wvalid <= 1'b0;
         end else if (curr_state == S_WR_DATA) begin
-            // Allow the AXI write channel to stall cleanly if the width-conversion
-            // FIFO has not accumulated enough 128-bit words yet.
+
             m_axi_wvalid <= ~wr_fifo_empty;
         end else begin
             m_axi_wvalid <= 1'b0;
         end
     end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge ui_clk or posedge ui_clk_sync_rst) begin
         if (ui_clk_sync_rst) begin
             wr_data_cnt <= 8'd0;
@@ -198,6 +207,7 @@ module edge_fifo2mig_axi #(
         end
     end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge ui_clk or posedge ui_clk_sync_rst) begin
         if (ui_clk_sync_rst) begin
             m_axi_wlast <= 1'b0;
@@ -211,6 +221,7 @@ module edge_fifo2mig_axi #(
         end
     end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge ui_clk or posedge ui_clk_sync_rst) begin
         if (ui_clk_sync_rst) begin
             m_axi_araddr <= rd_addr_begin[29:0];
@@ -224,6 +235,7 @@ module edge_fifo2mig_axi #(
         end
     end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge ui_clk or posedge ui_clk_sync_rst) begin
         if (ui_clk_sync_rst) begin
             m_axi_arvalid <= 1'b0;
@@ -234,16 +246,17 @@ module edge_fifo2mig_axi #(
         end
     end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge ui_clk or posedge ui_clk_sync_rst) begin
         if (ui_clk_sync_rst) begin
             wr_rd_poll <= 1'b0;
         end else if (curr_state == S_ARB) begin
-            // Simple round-robin preference between read and write bursts when
-            // both sides are ready.
+
             wr_rd_poll <= ~wr_rd_poll;
         end
     end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge ui_clk or posedge ui_clk_sync_rst) begin
         if (ui_clk_sync_rst) begin
             curr_state <= S_IDLE;
@@ -252,7 +265,10 @@ module edge_fifo2mig_axi #(
         end
     end
 
+    // 组合逻辑：根据当前状态和输入信号计算下一拍控制结果。
     always @(*) begin
+
+            // 状态机分支：按当前阶段执行握手、计数或数据搬运动作。
         case (curr_state)
             S_IDLE:    next_state = (mmcm_locked && init_calib_complete) ? S_ARB : S_IDLE;
             S_ARB:     next_state = (wr_ddr3_req && !wr_rd_poll) ? S_WR_ADDR :
@@ -265,6 +281,8 @@ module edge_fifo2mig_axi #(
             S_RD_RESP: next_state = (m_axi_rready  && m_axi_rvalid  && m_axi_rlast && (m_axi_rresp == 2'b00) && (m_axi_rid == AXI_ID)) ? S_ARB :
                                     (m_axi_rready  && m_axi_rvalid  && m_axi_rlast) ? S_IDLE : S_RD_RESP;
             default:   next_state = S_IDLE;
+
+            // 状态机分支结束，未命中的情况由默认分支回到安全状态。
         endcase
     end
 

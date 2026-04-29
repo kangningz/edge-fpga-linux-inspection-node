@@ -1,3 +1,5 @@
+// 配置文件读取实现。
+// 当前实现用轻量正则解析固定字段，避免在树莓派部署时引入额外 JSON 依赖。
 #include "config.hpp"
 
 #include <filesystem>
@@ -63,10 +65,6 @@ std::string resolve_config_relative_path(const std::string& config_path, const s
     const std::filesystem::path base_dir = cfg_path.has_parent_path() ? cfg_path.parent_path() : std::filesystem::current_path();
     const std::filesystem::path primary = (base_dir / candidate).lexically_normal();
 
-    // Backward compatibility:
-    // older configs used "./web" / "./logs/..." while config.json lives in ./config/.
-    // If that legacy relative path does not exist under the config directory,
-    // fall back to the project root one level above.
     if (raw_path.rfind("./", 0) == 0 && base_dir.filename() == "config") {
         const std::filesystem::path fallback = (base_dir.parent_path() / raw_path.substr(2)).lexically_normal();
         if (!std::filesystem::exists(primary) && !std::filesystem::exists(primary.parent_path())) {
@@ -77,8 +75,9 @@ std::string resolve_config_relative_path(const std::string& config_path, const s
     return primary.string();
 }
 
-} // namespace
+}
 
+// 读取配置文件并覆盖默认配置，缺省字段保留结构体中的默认值。
 bool load_config_file(const std::string& path, ServiceConfig& cfg, std::string& err) {
     std::string text;
     if (!read_file(path, text, err)) {

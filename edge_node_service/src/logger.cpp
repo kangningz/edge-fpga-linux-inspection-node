@@ -1,3 +1,5 @@
+// 日志写入实现。
+// 所有日志记录都带本地时间戳，并用互斥锁保证多线程输出不会交叉。
 #include "logger.hpp"
 
 #include <chrono>
@@ -28,8 +30,9 @@ std::string now_string() {
     return oss.str();
 }
 
-} // namespace
+}
 
+// 创建日志目录并打开追加写入的日志文件。
 Logger::Logger(const std::string& file_path) {
     const std::filesystem::path path(file_path);
     if (!path.parent_path().empty()) {
@@ -38,18 +41,22 @@ Logger::Logger(const std::string& file_path) {
     stream_.open(file_path, std::ios::app);
 }
 
+// 写入信息级日志。
 void Logger::info(const std::string& message) {
     write("INFO", message);
 }
 
+// 写入警告级日志。
 void Logger::warn(const std::string& message) {
     write("WARN", message);
 }
 
+// 写入错误级日志。
 void Logger::error(const std::string& message) {
     write("ERROR", message);
 }
 
+// 统一格式化并输出一条日志记录。
 void Logger::write(const char* level, const std::string& message) {
     std::lock_guard<std::mutex> lock(mutex_);
     const std::string line = "[" + now_string() + "][" + level + "] " + message;

@@ -1,16 +1,12 @@
-######################################################################
-# ACX750 - top_ov2640_ddr3_framebuffer.xdc
-#
-# 注意：
-# 1) 本文件只包含通用 IO 和 OV2640 相关约束
-# 2) DDR3 引脚约束请直接从官方 MIG/DDR3 例程里复制
-# 3) 不要手猜 DDR3 pinout
-######################################################################
+# FPGA 管脚与时序约束文件。
+# 约束内容覆盖板级时钟、OV2640 摄像头、DDR3、RGMII 以太网以及调试/告警引脚。
 
 set_property BITSTREAM.CONFIG.UNUSEDPIN Pullnone [current_design]
 
+# 管脚约束：把顶层端口绑定到开发板实际引脚，并设置对应 IO 电平标准。
 set_property PACKAGE_PIN W19 [get_ports FPGA_CLK]
 set_property IOSTANDARD LVCMOS33 [get_ports FPGA_CLK]
+# 主时钟约束：为综合和实现提供板级输入时钟周期。
 create_clock -name FPGA_CLK -period 20.000 [get_ports FPGA_CLK]
 
 set_property PACKAGE_PIN D21 [get_ports S0]
@@ -76,6 +72,3 @@ set_property IOSTANDARD LVCMOS33 [get_ports camera_vsync]
 set_property PACKAGE_PIN K18 [get_ports camera_pclk]
 set_property IOSTANDARD LVCMOS33 [get_ports camera_pclk]
 create_clock -name CAMERA_PCLK -period 20.000 [get_ports camera_pclk]
-
-# DDR3 相关 pin / IO standard / INTERNAL_VREF / SLEW / termination
-# 请直接合并官方例程中的 MIG 约束。

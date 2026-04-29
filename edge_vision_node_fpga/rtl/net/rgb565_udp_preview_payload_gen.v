@@ -1,19 +1,19 @@
 `timescale 1ns / 1ps
-
-// Build preview UDP payloads from the DDR3 readback pixel stream.
-//
-// Payload format:
-//   16-byte preview chunk header
-//   then chunk data from a logical byte stream:
-//     [0:3] = frame width/height metadata
-//     [4:]  = RGB565 pixel bytes
-//
-// Large frames are split into chunks so each UDP packet stays below MTU.
+// RGB565 预览 UDP 载荷生成器。
+// 它从 DDR3 读出帧像素，按分片头加宽高和像素数据，和遥测包一起仲裁发送。
 
 module rgb565_udp_preview_payload_gen #(
+
+    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
     parameter integer FRAME_WIDTH        = 800,
+
+    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
     parameter integer FRAME_HEIGHT       = 600,
+
+    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
     parameter integer CHUNK_DATA_BYTES   = 1024,
+
+    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
     parameter [7:0]   PREVIEW_MSG_TYPE   = 8'h12
 )(
     input  wire       clk,
@@ -36,8 +36,11 @@ module rgb565_udp_preview_payload_gen #(
     output reg [15:0] preview_frame_id,
     output reg        preview_packet_done,
     output reg        preview_frame_done
+
+// 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
 
+    // 本地常量定义状态编码、计数上限或协议字段，避免魔法数字散落在逻辑中。
     localparam integer STREAM_TOTAL_BYTES = 4 + FRAME_WIDTH * FRAME_HEIGHT * 2;
     localparam integer PAYLOAD_MAX_BYTES  = 16 + CHUNK_DATA_BYTES;
 
@@ -48,6 +51,7 @@ module rgb565_udp_preview_payload_gen #(
     localparam [2:0] S_LAUNCH    = 3'd4;
     localparam [2:0] S_WAIT_TX   = 3'd5;
 
+    // reg 信号保存跨周期状态、计数器、握手标志和流水线寄存结果。
     reg [2:0]  state;
     reg [15:0] chunk_id;
     reg [31:0] frame_offset;
@@ -82,18 +86,26 @@ module rgb565_udp_preview_payload_gen #(
     function [7:0] meta_byte_at;
         input [1:0] idx;
         begin
+
+            // 状态机分支：按当前阶段执行握手、计数或数据搬运动作。
             case (idx)
                 2'd0: meta_byte_at = FRAME_WIDTH[15:8];
                 2'd1: meta_byte_at = FRAME_WIDTH[7:0];
                 2'd2: meta_byte_at = FRAME_HEIGHT[15:8];
                 default: meta_byte_at = FRAME_HEIGHT[7:0];
+
+            // 状态机分支结束，未命中的情况由默认分支回到安全状态。
             endcase
         end
     endfunction
 
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign data_length = payload_total_len;
+
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign payload_dat = payload_mem[payload_send_idx];
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             state              <= S_IDLE;
@@ -120,11 +132,11 @@ module rgb565_udp_preview_payload_gen #(
             preview_packet_done <= 1'b0;
             preview_frame_done  <= 1'b0;
             if (frame_ready) begin
-                // If a new DDR3 frame completes while UDP is busy, remember
-                // that at least one fresh frame is pending.
+
                 frame_pending <= 1'b1;
             end
 
+            // 状态机分支：按当前阶段执行握手、计数或数据搬运动作。
             case (state)
                 S_IDLE: begin
                     if (frame_pending) begin
@@ -137,15 +149,13 @@ module rgb565_udp_preview_payload_gen #(
                 end
 
                 S_RESTART: begin
-                    // Restart the DDR3 readout at the beginning of each
-                    // preview frame before filling the first UDP chunk.
+
                     rd_frame_restart <= 1'b1;
                     state            <= S_PREPARE;
                 end
 
                 S_PREPARE: begin
-                    // Fill the fixed 16-byte chunk header. The flags byte marks
-                    // first and last chunks so Linux can reassemble cleanly.
+
                     remaining_stream  = STREAM_TOTAL_BYTES - frame_offset;
                     chunk_size_calc   = min16(remaining_stream, CHUNK_DATA_BYTES);
                     chunk_data_len    <= chunk_size_calc;
@@ -182,8 +192,7 @@ module rgb565_udp_preview_payload_gen #(
                     end else begin
                         stream_pos = frame_offset + (payload_fill_idx - 16);
                         if (stream_pos < 4) begin
-                            // First four stream bytes carry width/height before
-                            // raw pixels. This lets Linux validate frame size.
+
                             payload_mem[payload_fill_idx] <= meta_byte_at(stream_pos[1:0]);
                             payload_fill_idx <= payload_fill_idx + 1'b1;
                         end else if (low_byte_pending) begin
@@ -191,8 +200,7 @@ module rgb565_udp_preview_payload_gen #(
                             payload_fill_idx <= payload_fill_idx + 1'b1;
                             low_byte_pending <= 1'b0;
                         end else if (rd_pending) begin
-                            // DDR3 FIFO returns one RGB565 pixel. The service
-                            // currently expects low byte then high byte.
+
                             pixel_hold <= rd_pixel;
                             payload_mem[payload_fill_idx] <= rd_pixel[7:0];
                             payload_fill_idx <= payload_fill_idx + 1'b1;
@@ -207,7 +215,7 @@ module rgb565_udp_preview_payload_gen #(
 
                 S_LAUNCH: begin
                     if (!tx_busy) begin
-                        // Hand the prepared payload to the shared UDP TX block.
+
                         tx_en_pulse      <= 1'b1;
                         payload_send_idx <= 16'd0;
                         state            <= S_WAIT_TX;
@@ -235,6 +243,8 @@ module rgb565_udp_preview_payload_gen #(
                 default: begin
                     state <= S_IDLE;
                 end
+
+            // 状态机分支结束，未命中的情况由默认分支回到安全状态。
             endcase
         end
     end

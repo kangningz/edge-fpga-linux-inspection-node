@@ -1,19 +1,12 @@
-######################################################################
-# ACX750 - top_ov2640_ddr3_udp_preview.xdc
-#
-# This file constrains:
-# - common board IO
-# - OV2640 camera IO
-# - RGMII TX pins only
-#
-# DDR3 pin constraints must come from the generated mig_7series_0.xdc.
-# Do not enable mig_7series_0_ooc.xdc.
-######################################################################
+# FPGA 管脚与时序约束文件。
+# 约束内容覆盖板级时钟、OV2640 摄像头、DDR3、RGMII 以太网以及调试/告警引脚。
 
 set_property BITSTREAM.CONFIG.UNUSEDPIN Pullnone [current_design]
 
+# 管脚约束：把顶层端口绑定到开发板实际引脚，并设置对应 IO 电平标准。
 set_property PACKAGE_PIN W19 [get_ports FPGA_CLK]
 set_property IOSTANDARD LVCMOS33 [get_ports FPGA_CLK]
+# 主时钟约束：为综合和实现提供板级输入时钟周期。
 create_clock -name FPGA_CLK -period 20.000 [get_ports FPGA_CLK]
 
 set_property PACKAGE_PIN D21 [get_ports S0]
@@ -78,8 +71,6 @@ set_property IOSTANDARD LVCMOS33 [get_ports camera_pclk]
 create_clock -name CAMERA_PCLK -period 20.000 [get_ports camera_pclk]
 create_clock -name RGMII_RX_CLK -period 8.000 [get_ports rgmii_rx_clk_i]
 
-# Asynchronous user clock domains used by the UDP preview path.
-# Use top-level nets so the constraints survive generated-clock naming differences.
 set_clock_groups -asynchronous \
   -group [get_clocks FPGA_CLK] \
   -group [get_clocks CAMERA_PCLK] \
@@ -122,7 +113,6 @@ set_property IOSTANDARD LVCMOS33 [get_ports {rgmii_rxd[3]}]
 
 set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets rgmii_rx_clk_i]
 
-# Explicit CDC exceptions for synchronizer first-stage flops only.
 set_false_path -to [get_pins -hier -filter {NAME =~ *u_wr_frame_done_to_eth*/dst_ff0_reg/D}]
 set_false_path -to [get_pins -hier -filter {NAME =~ *u_preview_packet_done_to_sys*/dst_ff0_reg/D}]
 set_false_path -to [get_pins -hier -filter {NAME =~ *u_preview_frame_done_to_sys*/dst_ff0_reg/D}]

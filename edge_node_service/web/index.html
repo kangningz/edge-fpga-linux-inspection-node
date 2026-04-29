@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>基于 FPGA + Linux 的边缘智能巡检感知节点</title>
   <style>
+    /* 页面样式：定义仪表盘布局、状态色、表单控件和预览区域外观。 */
     :root {
       --bg: #f4f1e9;
       --panel: rgba(255, 255, 255, 0.9);
@@ -531,6 +532,7 @@
   </div>
 
   <script>
+    // 前端脚本：轮询服务状态、刷新预览图、处理 ROI 绘制和下发控制命令。
     const previewImg = document.getElementById("preview-img");
     const previewBox = document.getElementById("preview-box");
     const previewEmpty = document.getElementById("preview-empty");
@@ -540,8 +542,8 @@
     const roiSelection = document.getElementById("roi-selection");
     let lastPreviewToken = "";
     let latestStatus = null;
-    // When the user is editing ROI/threshold values, do not let the 100 ms
-    // status polling overwrite those pending inputs before they are applied.
+    // 用户正在编辑 ROI 或阈值时，不让 100 ms 状态轮询覆盖待提交输入。
+    // 这些输入只有在下发后才允许被硬件回读值刷新。
     let paramsEditPending = false;
     let roiDrag = null;
     let statusRequestInFlight = false;
@@ -597,8 +599,8 @@
     }
 
     async function applyParams() {
-      // The Web page sends all runtime parameters together so the FPGA register
-      // bank receives a coherent ROI/threshold/mode update sequence.
+      // 网页一次性发送全部运行参数，让 FPGA 寄存器组按一致的 ROI、阈值和模式组合更新。
+      // 这样可以避免只更新部分字段造成一帧内参数不一致。
       const params = new URLSearchParams({
         roi_x: document.getElementById("roi_x").value,
         roi_y: document.getElementById("roi_y").value,
@@ -693,8 +695,8 @@
       if (!latestStatus) {
         return;
       }
-      // Reuse the normal overlay renderer, but replace ROI fields with the
-      // pending form values so the yellow/red box follows unsent edits.
+      // 复用正常覆盖层绘制逻辑，但用表单中的待提交 ROI 替换硬件回读值。
+      // 这样黄色或红色 ROI 框可以跟随尚未下发的编辑结果移动。
       updateRoiOverlay({
         ...latestStatus,
         current_roi_x: inputNumber("roi_x", 0),
@@ -731,9 +733,7 @@
       if (imageRect.width <= 0 || imageRect.height <= 0) {
         return null;
       }
-
-      // imageRect is the displayed browser size; previewWidth/Height are FPGA
-      // coordinates. Both are needed for bidirectional coordinate conversion.
+      // 双向坐标换算必须同时知道这两个坐标系。
       return { previewWidth, previewHeight, imageRect, boxRect };
     }
 
@@ -745,7 +745,7 @@
 
       const px = Math.max(0, Math.min(event.clientX - geometry.imageRect.left, geometry.imageRect.width));
       const py = Math.max(0, Math.min(event.clientY - geometry.imageRect.top, geometry.imageRect.height));
-      // Convert browser pixels back into FPGA preview coordinates.
+      // 把浏览器像素坐标换算回 FPGA 预览坐标。
       return {
         x: Math.round(px * geometry.previewWidth / geometry.imageRect.width),
         y: Math.round(py * geometry.previewHeight / geometry.imageRect.height)
@@ -826,8 +826,8 @@
         return;
       }
 
-      // Keep the selected ROI as a pending edit. It is not sent to FPGA until
-      // the user clicks "下发当前 ROI" or "下发参数".
+      // 拖拽选择的 ROI 先作为待提交编辑保存，暂不立即写入 FPGA。
+      // 用户点击下发按钮后才真正更新硬件寄存器。
       paramsEditPending = true;
       document.getElementById("roi_x").value = x0;
       document.getElementById("roi_y").value = y0;
@@ -874,8 +874,8 @@
 
       const scaleX = imageRect.width / previewWidth;
       const scaleY = imageRect.height / previewHeight;
-      // Map FPGA ROI coordinates into the rendered image rectangle. The image
-      // may be scaled by CSS, so raw ROI pixels cannot be used directly.
+      // 把 FPGA ROI 坐标映射到浏览器实际渲染出的图像矩形。
+      // 图像可能被 CSS 缩放，不能直接拿原始 ROI 像素当屏幕坐标。
       roiOverlay.style.left = `${imageRect.left - boxRect.left + clippedX * scaleX}px`;
       roiOverlay.style.top = `${imageRect.top - boxRect.top + clippedY * scaleY}px`;
       roiOverlay.style.width = `${clippedW * scaleX}px`;
@@ -905,8 +905,8 @@
         currentPreviewDecode()
       ].join(":");
 
-      // Avoid reloading the same image every 100 ms when no preview frame has
-      // changed. This reduces browser work and prevents visible flicker.
+      // 没有新预览帧时避免每 100 ms 重载同一张图片。
+      // 这样能减少浏览器工作量并避免画面闪烁。
       if (token === lastPreviewToken) {
         return;
       }
@@ -972,8 +972,7 @@
       const alarmEnabled = Boolean((status.status_bits || 0) & 0x100);
       const alarmActive = Boolean((status.status_bits || 0) & 0x20);
       const alarmThreshold = currentParam(status, "current_alarm_count_threshold", "default_alarm_count_threshold", 256);
-      // Keep alarm_enable and alarm_active visually distinct: DISABLED means
-      // the alarm path is intentionally off, CLEAR means enabled but not active.
+      // 区分 alarm_enable 和 alarm_active 的显示语义：DISABLED 表示告警通路被主动关闭。
       setText("alarm-state", alarmActive ? "ACTIVE" : (alarmEnabled ? "CLEAR" : "DISABLED"));
       document.getElementById("alarm-card").classList.toggle("alarm-active", alarmActive);
       previewBox.classList.toggle("alarm-active", alarmActive);
@@ -1086,8 +1085,8 @@
       }
 
       if (!paramsEditPending && document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "SELECT") {
-        // Only mirror FPGA runtime parameters into the form when the user is
-        // not currently editing. Otherwise polling would erase pending changes.
+        // 只有用户没有编辑时，才把 FPGA 运行参数同步回表单。
+        // 否则轮询会擦掉尚未下发的本地修改。
         document.getElementById("roi_x").value = currentParam(status, "current_roi_x", "default_roi_x", 0);
         document.getElementById("roi_y").value = currentParam(status, "current_roi_y", "default_roi_y", 0);
         document.getElementById("roi_w").value = currentParam(status, "current_roi_w", "default_roi_w", 64);

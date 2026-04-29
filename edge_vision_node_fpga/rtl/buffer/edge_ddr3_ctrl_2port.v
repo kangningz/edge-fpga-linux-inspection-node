@@ -1,16 +1,6 @@
 `timescale 1ns / 1ps
-
-// Two-port-style wrapper around the MIG AXI interface.
-//
-// Write side:
-//   camera/packing logic writes 16-bit RGB565 pixels into wr_ddr3_fifo.
-//   This module reads wider 128-bit beats from the FIFO and writes DDR3 bursts.
-//
-// Read side:
-//   preview logic requests pixels from rdfifo.
-//   This module reads DDR3 bursts and fills rdfifo with 16-bit pixels.
-//
-// The FIFO wrappers isolate external clocks from the MIG ui_clk domain.
+// DDR3 双端口控制器，负责把写入侧视频流和读取侧预览请求转换为 MIG AXI 访问。
+// 写端按帧顺序写入帧缓冲区，读端按像素地址取回 RGB565 数据供 UDP 预览发送。
 
 module edge_ddr3_ctrl_2port (
     input           ddr3_clk200m,
@@ -57,8 +47,11 @@ module edge_ddr3_ctrl_2port (
     output [0:0]    ddr3_cs_n,
     output [3:0]    ddr3_dm,
     output [0:0]    ddr3_odt
+
+// 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
 
+    // wire 信号承载组合逻辑结果或子模块之间的连接。
     wire          wrfifo_rden;
     wire [127:0]  wrfifo_dout;
     wire [5:0]    wrfifo_rd_cnt_int;
@@ -78,6 +71,8 @@ module edge_ddr3_ctrl_2port (
     wire          init_calib_complete;
     wire          wr_addr_clr_pulse;
     wire          rd_addr_clr_pulse;
+
+    // reg 信号保存跨周期状态、计数器、握手标志和流水线寄存结果。
     reg           wr_addr_clr_ui;
     reg           rd_addr_clr_ui;
 
@@ -126,7 +121,10 @@ module edge_ddr3_ctrl_2port (
     reg           wr_axi_seen_reg;
     reg           rd_axi_seen_reg;
 
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign ddr3_init_done = mmcm_locked && init_calib_complete;
+
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign ddr3_mmcm_locked = mmcm_locked;
     assign ddr3_calib_done  = init_calib_complete;
     assign ddr3_wr_axi_seen = wr_axi_seen_reg;
@@ -134,8 +132,6 @@ module edge_ddr3_ctrl_2port (
     assign ui_rst = ui_clk_sync_rst;
     assign device_temp = 12'h000;
 
-    // Camera/write side CDC: 16-bit pixels enter in wrfifo_clk and are widened
-    // by the FIFO to 128-bit words for efficient AXI writes.
     wr_ddr3_fifo u_wr_ddr3_fifo (
         .rst           (wrfifo_clr),
         .wr_clk        (wrfifo_clk),
@@ -154,8 +150,6 @@ module edge_ddr3_ctrl_2port (
 
     wire [8:0] rdfifo_rd_cnt_int;
 
-    // Preview/read side CDC: 128-bit MIG read data is narrowed by the FIFO back
-    // to 16-bit RGB565 pixels for the UDP preview packetizer.
     rd_ddr3_fifo u_rd_ddr3_fifo (
         .rst           (rdfifo_clr),
         .wr_clk        (ui_clk),
@@ -174,8 +168,6 @@ module edge_ddr3_ctrl_2port (
     assign rdfifo_rd_cnt_int = {3'b000, rdfifo_wr_cnt};
     assign rdfifo_rd_cnt     = rdfifo_rd_cnt_int;
 
-    // Clear pulses originate outside ui_clk. Convert them into ui_clk pulses so
-    // the AXI address generator can restart frame write/read ranges safely.
     pulse_sync_toggle u_wrfifo_clr_to_ui (
         .src_clk   (wrfifo_clk),
         .src_rst_n (ddr3_rst_n),
@@ -194,6 +186,7 @@ module edge_ddr3_ctrl_2port (
         .dst_pulse (rd_addr_clr_pulse)
     );
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge ui_clk or posedge ui_clk_sync_rst) begin
         if (ui_clk_sync_rst) begin
             wr_addr_clr_ui <= 1'b0;
@@ -204,6 +197,7 @@ module edge_ddr3_ctrl_2port (
         end
     end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge ui_clk or posedge ui_clk_sync_rst) begin
         if (ui_clk_sync_rst) begin
             wr_axi_seen_reg <= 1'b0;
@@ -347,8 +341,7 @@ module edge_ddr3_ctrl_2port (
         .s_axi_rready        (s_axi_rready),
         .device_temp         (device_temp),
         .sys_clk_i           (ddr3_clk200m),
-        // MIG was configured with ACTIVE LOW system reset, so feed the
-        // deasserted-high reset_n signal directly instead of inverting it.
+
         .sys_rst             (ddr3_rst_n)
     );
 

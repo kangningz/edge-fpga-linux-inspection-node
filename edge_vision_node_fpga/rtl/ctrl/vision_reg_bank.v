@@ -1,10 +1,6 @@
 `timescale 1ns / 1ps
-
-// Runtime control register bank in the Ethernet/control clock domain.
-//
-// Linux sends UDP command packets. udp_cmd_packet_parser validates the packet,
-// cmd_async_fifo crosses it into this clock domain, and this module updates the
-// registers consumed by capture, preprocessing, telemetry, and alarm logic.
+// 视觉节点运行寄存器组。
+// Linux 通过 UDP 命令写入 ROI、阈值、告警门限和控制位，硬件数据通路从这些寄存器取参数。
 
 module vision_reg_bank (
     input  wire        clk,
@@ -30,8 +26,11 @@ module vision_reg_bank (
     output reg         clear_error_pulse,
     output reg         last_cmd_error,
     output reg  [15:0] last_cmd_seq
+
+// 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             capture_enable    <= 1'b1;
@@ -49,8 +48,7 @@ module vision_reg_bank (
             last_cmd_error    <= 1'b0;
             last_cmd_seq      <= 16'd0;
         end else begin
-            // These are one-cycle pulses. They automatically return to zero
-            // unless the current command explicitly asserts them.
+
             force_status_send <= 1'b0;
             clear_error_pulse <= 1'b0;
 
@@ -58,10 +56,12 @@ module vision_reg_bank (
                 last_cmd_seq <= cmd_seq;
                 force_status_send <= 1'b1;
 
+            // 状态机分支：按当前阶段执行握手、计数或数据搬运动作。
                 case (cmd_code)
-                    // 0x01: Write register. The address map is shared with the
-                    // Linux protocol.hpp definitions and 数据包格式.txt.
+
                     8'h01: begin
+
+            // 状态机分支：按当前阶段执行握手、计数或数据搬运动作。
                         case (cmd_addr)
                             16'h0000: begin
                                 capture_enable    <= cmd_data0[0];
@@ -71,28 +71,28 @@ module vision_reg_bank (
                             end
                             16'h0010: begin roi_x <= cmd_data0[10:0]; last_cmd_error <= 1'b0; end
                             16'h0011: begin roi_y <= cmd_data0[10:0]; last_cmd_error <= 1'b0; end
-                            // Width/height and alarm threshold are clamped away
-                            // from zero so downstream comparisons remain valid.
+
                             16'h0012: begin roi_w <= (cmd_data0[10:0] == 11'd0) ? 11'd1 : cmd_data0[10:0]; last_cmd_error <= 1'b0; end
                             16'h0013: begin roi_h <= (cmd_data0[10:0] == 11'd0) ? 11'd1 : cmd_data0[10:0]; last_cmd_error <= 1'b0; end
                             16'h0014: begin bright_threshold <= cmd_data0[7:0]; last_cmd_error <= 1'b0; end
                             16'h0015: begin tx_mode <= cmd_data0[1:0]; last_cmd_error <= 1'b0; end
                             16'h0016: begin alarm_count_threshold <= (cmd_data0[15:0] == 16'd0) ? 16'd1 : cmd_data0[15:0]; last_cmd_error <= 1'b0; end
                             default: begin last_cmd_error <= 1'b1; end
+
+            // 状态机分支结束，未命中的情况由默认分支回到安全状态。
                         endcase
                     end
                     8'h02: begin
-                        // Read command is acknowledged through status update in
-                        // this demo design; no separate readback packet is sent.
+
                         last_cmd_error <= 1'b0;
                     end
                     8'h03: begin
-                        // START_CAPTURE
+
                         capture_enable <= 1'b1;
                         last_cmd_error <= 1'b0;
                     end
                     8'h04: begin
-                        // STOP_CAPTURE
+
                         capture_enable <= 1'b0;
                         last_cmd_error <= 1'b0;
                     end
@@ -100,26 +100,25 @@ module vision_reg_bank (
                         last_cmd_error <= 1'b0;
                     end
                     8'h06: begin
-                        // CLEAR_ERROR also clears camera-domain sticky flags via
-                        // pulse_sync_toggle in the top-level module.
+
                         clear_error_pulse <= 1'b1;
                         last_cmd_error    <= 1'b0;
                     end
                     8'h07: begin
-                        // BUZZER_ON enables the alarm path; it does not force an
-                        // alarm unless bright_count crosses the threshold.
+
                         alarm_enable   <= 1'b1;
                         last_cmd_error <= 1'b0;
                     end
                     8'h08: begin
-                        // BUZZER_OFF disables alarm output while statistics
-                        // continue to be reported normally.
+
                         alarm_enable   <= 1'b0;
                         last_cmd_error <= 1'b0;
                     end
                     default: begin
                         last_cmd_error <= 1'b1;
                     end
+
+            // 状态机分支结束，未命中的情况由默认分支回到安全状态。
                 endcase
             end
         end

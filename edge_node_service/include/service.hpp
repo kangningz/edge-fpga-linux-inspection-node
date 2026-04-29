@@ -1,3 +1,5 @@
+// 边缘节点后台服务主类声明。
+// 该类负责 UDP 收发、HTTP 接口、预览帧重组、告警记录、配置热加载和运行参数下发。
 #pragma once
 
 #include <atomic>
@@ -14,6 +16,7 @@
 #include "logger.hpp"
 #include "protocol.hpp"
 
+// EdgeNodeService 封装后台服务生命周期和所有跨线程共享状态。
 class EdgeNodeService {
 public:
     EdgeNodeService(std::string config_path, ServiceConfig config, Logger& logger);
@@ -38,6 +41,8 @@ public:
         std::string& err);
 
 private:
+
+    // 保存 FPGA 链路和遥测的最新状态，HTTP 状态接口会从这里取快照。
     struct RuntimeState {
         bool online = false;
         bool has_packet = false;
@@ -54,6 +59,7 @@ private:
         std::deque<std::string> recent_events;
     };
 
+    // 保存已经重组完成的最新预览图及其元数据。
     struct PreviewState {
         bool available = false;
         std::uint64_t preview_packets = 0;
@@ -70,6 +76,7 @@ private:
         std::vector<std::uint8_t> latest_payload;
     };
 
+    // 保存当前正在接收的预览帧分片重组进度。
     struct PreviewAssembly {
         bool active = false;
         std::uint16_t frame_id = 0;
@@ -79,6 +86,7 @@ private:
         std::vector<std::uint8_t> buffer;
     };
 
+    // 保存当前已经下发到 FPGA 的运行参数，便于前端表单回显。
     struct RuntimeParams {
         std::uint32_t roi_x = 0;
         std::uint32_t roi_y = 0;
@@ -89,6 +97,7 @@ private:
         std::uint32_t tx_mode = 2;
     };
 
+    // 记录一次告警发生时的时间、统计值、ROI 参数和快照地址。
     struct AlarmEvent {
         std::string timestamp;
         std::uint16_t frame_id = 0;
@@ -102,6 +111,7 @@ private:
         std::string image_url;
     };
 
+    // 保存告警边沿检测状态和最近告警事件队列。
     struct AlarmState {
         bool last_alarm_active = false;
         std::uint64_t event_count = 0;

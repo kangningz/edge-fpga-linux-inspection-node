@@ -1,14 +1,20 @@
 `timescale 1ns / 1ps
+// SCCB 单寄存器写主机。
+// 该模块产生 SIOC/SIOD 时序，依次发送设备地址、寄存器地址和寄存器数据并采样应答。
 
 module sccb_master_write #(
+
+    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
     parameter integer CLK_HZ      = 50_000_000,
+
+    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
     parameter integer SCCB_FREQ_HZ = 100_000
 )(
     input  wire clk,
     input  wire rst_n,
 
     input  wire start,
-    input  wire [7:0] dev_addr_w, // 8bit 写地址，例如 8'h60
+    input  wire [7:0] dev_addr_w,
     input  wire [7:0] reg_addr,
     input  wire [7:0] reg_data,
 
@@ -18,26 +24,29 @@ module sccb_master_write #(
     output reg  busy,
     output reg  done,
     output reg  ack_error
+
+// 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
 
-    // ------------------------------------------------------------
-    // 开漏输出：拉低为 0，释放为 Z，由外部上拉变成 1
-    // ------------------------------------------------------------
+    // reg 信号保存跨周期状态、计数器、握手标志和流水线寄存结果。
     reg scl_drive_low;
     reg sda_drive_low;
 
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign sccb_scl = scl_drive_low ? 1'b0 : 1'bz;
+
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign sccb_sda = sda_drive_low ? 1'b0 : 1'bz;
 
+    // wire 信号承载组合逻辑结果或子模块之间的连接。
     wire sda_in = sccb_sda;
 
-    // ------------------------------------------------------------
-    // quarter tick 发生器：1 个 tick = SCCB 周期的 1/4
-    // ------------------------------------------------------------
+    // 本地常量定义状态编码、计数上限或协议字段，避免魔法数字散落在逻辑中。
     localparam integer DIVIDER = (CLK_HZ / (SCCB_FREQ_HZ * 4));
     reg [15:0] div_cnt;
     reg tick;
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             div_cnt <= 16'd0;
@@ -53,9 +62,6 @@ module sccb_master_write #(
         end
     end
 
-    // ------------------------------------------------------------
-    // 写状态机：start -> dev_addr -> reg_addr -> reg_data -> stop
-    // ------------------------------------------------------------
     localparam [3:0]
         S_IDLE  = 4'd0,
         S_START = 4'd1,
@@ -66,7 +72,7 @@ module sccb_master_write #(
 
     reg [3:0] state;
     reg [1:0] phase;
-    reg [1:0] byte_idx;   // 0:dev, 1:reg, 2:data
+    reg [1:0] byte_idx;
     reg [2:0] bit_idx;
     reg [7:0] cur_byte;
     reg start_pending;
@@ -77,15 +83,20 @@ module sccb_master_write #(
         input [7:0] reg_addr_i;
         input [7:0] reg_data_i;
         begin
+
+            // 状态机分支：按当前阶段执行握手、计数或数据搬运动作。
             case (idx)
                 2'd0: select_byte = dev_addr_w_i;
                 2'd1: select_byte = reg_addr_i;
                 2'd2: select_byte = reg_data_i;
                 default: select_byte = 8'h00;
+
+            // 状态机分支结束，未命中的情况由默认分支回到安全状态。
             endcase
         end
     endfunction
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             state         <= S_IDLE;
@@ -102,15 +113,16 @@ module sccb_master_write #(
         end else begin
             done <= 1'b0;
 
-            // Lock the one-cycle request until the SCCB state machine reaches its own tick.
             if (start)
                 start_pending <= 1'b1;
 
             if (tick) begin
+
+            // 状态机分支：按当前阶段执行握手、计数或数据搬运动作。
                 case (state)
                     S_IDLE: begin
-                        scl_drive_low <= 1'b0; // release high
-                        sda_drive_low <= 1'b0; // release high
+                        scl_drive_low <= 1'b0;
+                        sda_drive_low <= 1'b0;
                         busy          <= 1'b0;
                         ack_error     <= 1'b0;
                         phase         <= 2'd0;
@@ -125,6 +137,8 @@ module sccb_master_write #(
                     end
 
                     S_START: begin
+
+            // 状态机分支：按当前阶段执行握手、计数或数据搬运动作。
                         case (phase)
                             2'd0: begin
                                 scl_drive_low <= 1'b0;
@@ -133,11 +147,11 @@ module sccb_master_write #(
                             end
                             2'd1: begin
                                 scl_drive_low <= 1'b0;
-                                sda_drive_low <= 1'b1; // SDA low while SCL high
+                                sda_drive_low <= 1'b1;
                                 phase         <= 2'd2;
                             end
                             2'd2: begin
-                                scl_drive_low <= 1'b1; // pull SCL low
+                                scl_drive_low <= 1'b1;
                                 sda_drive_low <= 1'b1;
                                 phase         <= 2'd3;
                             end
@@ -145,26 +159,28 @@ module sccb_master_write #(
                                 phase  <= 2'd0;
                                 state  <= S_SEND;
                             end
+
+            // 状态机分支结束，未命中的情况由默认分支回到安全状态。
                         endcase
                     end
 
                     S_SEND: begin
                         case (phase)
                             2'd0: begin
-                                scl_drive_low <= 1'b1; // SCL low, set data
-                                sda_drive_low <= ~cur_byte[bit_idx]; // bit=0 拉低；bit=1 释放
+                                scl_drive_low <= 1'b1;
+                                sda_drive_low <= ~cur_byte[bit_idx];
                                 phase         <= 2'd1;
                             end
                             2'd1: begin
-                                scl_drive_low <= 1'b0; // SCL high
+                                scl_drive_low <= 1'b0;
                                 phase         <= 2'd2;
                             end
                             2'd2: begin
-                                scl_drive_low <= 1'b0; // keep high
+                                scl_drive_low <= 1'b0;
                                 phase         <= 2'd3;
                             end
                             2'd3: begin
-                                scl_drive_low <= 1'b1; // SCL low
+                                scl_drive_low <= 1'b1;
                                 if (bit_idx == 3'd0) begin
                                     phase <= 2'd0;
                                     state <= S_ACK;
@@ -173,22 +189,24 @@ module sccb_master_write #(
                                     phase   <= 2'd0;
                                 end
                             end
+
+            // 状态机分支结束，未命中的情况由默认分支回到安全状态。
                         endcase
                     end
 
                     S_ACK: begin
                         case (phase)
                             2'd0: begin
-                                scl_drive_low <= 1'b1; // low
-                                sda_drive_low <= 1'b0; // release SDA for ACK
+                                scl_drive_low <= 1'b1;
+                                sda_drive_low <= 1'b0;
                                 phase         <= 2'd1;
                             end
                             2'd1: begin
-                                scl_drive_low <= 1'b0; // high
+                                scl_drive_low <= 1'b0;
                                 phase         <= 2'd2;
                             end
                             2'd2: begin
-                                // ACK=0, NACK=1
+
                                 if (sda_in == 1'b1)
                                     ack_error <= 1'b1;
                                 phase <= 2'd3;
@@ -208,6 +226,8 @@ module sccb_master_write #(
                                     state    <= S_SEND;
                                 end
                             end
+
+            // 状态机分支结束，未命中的情况由默认分支回到安全状态。
                         endcase
                     end
 
@@ -215,23 +235,25 @@ module sccb_master_write #(
                         case (phase)
                             2'd0: begin
                                 scl_drive_low <= 1'b1;
-                                sda_drive_low <= 1'b1; // SDA low
+                                sda_drive_low <= 1'b1;
                                 phase         <= 2'd1;
                             end
                             2'd1: begin
-                                scl_drive_low <= 1'b0; // SCL high
+                                scl_drive_low <= 1'b0;
                                 sda_drive_low <= 1'b1;
                                 phase         <= 2'd2;
                             end
                             2'd2: begin
                                 scl_drive_low <= 1'b0;
-                                sda_drive_low <= 1'b0; // SDA release -> stop
+                                sda_drive_low <= 1'b0;
                                 phase         <= 2'd3;
                             end
                             2'd3: begin
                                 phase <= 2'd0;
                                 state <= S_DONE;
                             end
+
+            // 状态机分支结束，未命中的情况由默认分支回到安全状态。
                         endcase
                     end
 
@@ -252,6 +274,8 @@ module sccb_master_write #(
                         scl_drive_low <= 1'b0;
                         sda_drive_low <= 1'b0;
                     end
+
+            // 状态机分支结束，未命中的情况由默认分支回到安全状态。
                 endcase
             end
         end

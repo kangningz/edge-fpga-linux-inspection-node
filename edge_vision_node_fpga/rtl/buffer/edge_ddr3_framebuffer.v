@@ -1,10 +1,22 @@
 `timescale 1ns / 1ps
+// DDR3 帧缓冲封装模块，把摄像头像素写入外部 DDR3 并为网络预览提供读接口。
+// 该模块隐藏 MIG 初始化、地址递增和读写仲裁细节，顶层只关心帧开始、像素有效和读请求握手。
 
 module edge_ddr3_framebuffer #(
+
+    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
     parameter FRAME_WIDTH     = 800,
+
+    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
     parameter FRAME_HEIGHT    = 600,
+
+    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
     parameter FRAME_BASE_ADDR = 32'h0000_0000,
+
+    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
     parameter FRAME_BYTES     = 32'd960000,
+
+    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
     parameter BURST_BYTES     = 32'd512
 )(
     input  wire       sys_rst_n,
@@ -56,10 +68,14 @@ module edge_ddr3_framebuffer #(
     output wire       frame_end_16_dbg,
     output wire       packer_error_dbg,
     output wire       wrfifo_full_dbg
+
+// 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
 
+    // 本地常量定义状态编码、计数上限或协议字段，避免魔法数字散落在逻辑中。
     localparam integer FRAME_PIXELS = FRAME_WIDTH * FRAME_HEIGHT;
 
+    // wire 信号承载组合逻辑结果或子模块之间的连接。
     wire pixel_valid_16;
     wire [15:0] pixel_data_16;
     wire frame_start_16;
@@ -71,6 +87,8 @@ module edge_ddr3_framebuffer #(
     (* ASYNC_REG = "TRUE" *) reg cam_rst_ff1 = 1'b0;
     (* ASYNC_REG = "TRUE" *) reg rd_rst_ff0 = 1'b0;
     (* ASYNC_REG = "TRUE" *) reg rd_rst_ff1 = 1'b0;
+
+    // reg 信号保存跨周期状态、计数器、握手标志和流水线寄存结果。
     reg [19:0] wr_pixel_cnt;
     reg [19:0] rd_pixel_cnt;
 
@@ -104,21 +122,25 @@ module edge_ddr3_framebuffer #(
     wire [31:0] rd_addr_begin = FRAME_BASE_ADDR + (rd_bank_ui ? FRAME_BYTES : 32'd0);
     wire [31:0] rd_addr_end   = rd_addr_begin + FRAME_BYTES - BURST_BYTES;
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge camera_pclk) begin
         cam_rst_ff0 <= sys_rst_n;
         cam_rst_ff1 <= cam_rst_ff0;
     end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge rd_clk) begin
         rd_rst_ff0 <= sys_rst_n;
         rd_rst_ff1 <= rd_rst_ff0;
     end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge rd_clk) begin
         latest_completed_bank_rd_ff0 <= latest_completed_bank_cam;
         latest_completed_bank_rd_ff1 <= latest_completed_bank_rd_ff0;
     end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge camera_pclk) begin
         rd_busy_cam_ff0 <= rd_busy_rd;
         rd_busy_cam_ff1 <= rd_busy_cam_ff0;
@@ -126,6 +148,7 @@ module edge_ddr3_framebuffer #(
         rd_bank_cam_ff1 <= rd_bank_cam_ff0;
     end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge ui_clk or posedge ui_rst) begin
         if (ui_rst) begin
             wr_bank_ui_ff0 <= 1'b0;
@@ -162,6 +185,7 @@ module edge_ddr3_framebuffer #(
         .byte_phase_error(packer_error)
     );
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge camera_pclk) begin
         if (!cam_rst_n) begin
             wrfifo_clr <= 1'b1;
@@ -170,6 +194,7 @@ module edge_ddr3_framebuffer #(
         end
     end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge camera_pclk) begin
         if (!cam_rst_n) begin
             wr_pixel_cnt      <= 20'd0;
@@ -200,6 +225,7 @@ module edge_ddr3_framebuffer #(
         end
     end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge rd_clk) begin
         if (!rd_rst_n) begin
             rdfifo_clr <= 1'b1;
@@ -210,6 +236,7 @@ module edge_ddr3_framebuffer #(
         end
     end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge rd_clk) begin
         if (!rd_rst_n) begin
             rd_pixel_cnt      <= 20'd0;
@@ -277,7 +304,10 @@ module edge_ddr3_framebuffer #(
         .ddr3_odt     (ddr3_odt)
     );
 
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign frame_start_16_dbg = frame_start_16;
+
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign frame_end_16_dbg   = frame_end_16;
     assign packer_error_dbg   = packer_error;
 

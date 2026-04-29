@@ -1,19 +1,6 @@
-﻿/////////////////////////////////////////////////////////////////////////////////
-// Company       : 武汉芯路恒科技有限公司
-//                 http://xiaomeige.taobao.com
-// Web           : http://www.corecourse.cn
-// 
-// Create Date   : 2019/05/01 00:00:00
-// Module Name   : eth_udp_rx_gmii
-// Description   : 以太网接收模块，gmii接口
-// 
-// Dependencies  : 
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-// 
-/////////////////////////////////////////////////////////////////////////////////
+﻿
+// GMII 以太网/IPv4/UDP 接收模块。
+// 它解析 MAC、IP 和 UDP 头，过滤目标地址与端口，并把有效 UDP 载荷输出给命令解析器。
 
 module eth_udp_rx_gmii(
   reset_p,
@@ -35,9 +22,11 @@ module eth_udp_rx_gmii(
   pkt_error,
   debug_crc_check,
 
-  gmii_rx_clk,  
+  gmii_rx_clk,
   gmii_rxdv,
   gmii_rxd
+
+// 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
   input              reset_p;
 
@@ -62,11 +51,13 @@ module eth_udp_rx_gmii(
   (*IOB = "TRUE"*) input  [7:0] gmii_rxd;
   (*IOB = "TRUE"*) input        gmii_rxdv;
 
+    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
   parameter ETH_type       = 16'h0800,
             IP_ver         = 4'h4,
             IP_hdr_len     = 4'h5,
             IP_protocol    = 8'h11;
 
+    // 本地常量定义状态编码、计数上限或协议字段，避免魔法数字散落在逻辑中。
   localparam
     IDLE          = 9'b000000001,
     RX_PREAMBLE   = 9'b000000010,
@@ -78,6 +69,7 @@ module eth_udp_rx_gmii(
     RX_CRC        = 9'b010000000,
     PKT_CHECK     = 9'b100000000;
 
+    // wire 信号承载组合逻辑结果或子模块之间的连接。
   wire        clk125m;
   (* mark_debug = "true" *)reg  [7:0]  reg_gmii_rxd;
   (* mark_debug = "true" *)reg         reg_gmii_rxdv;
@@ -85,9 +77,11 @@ module eth_udp_rx_gmii(
   (* mark_debug = "true" *)reg  [7:0]  rx_data_dly2;
  (* mark_debug = "true" *) reg         rx_datav_dly1;
  (* mark_debug = "true" *) reg         rx_datav_dly2;
+
+    // reg 信号保存跨周期状态、计数器、握手标志和流水线寄存结果。
   reg  [47:0] local_mac_reg;
   reg  [31:0] local_ip_reg;
-  reg  [15:0] local_port_reg;  
+  reg  [15:0] local_port_reg;
  (* mark_debug = "true" *) reg  [8:0]  curr_state;
   reg  [8:0]  next_state;
 
@@ -112,7 +106,7 @@ module eth_udp_rx_gmii(
   reg  [15:0] rx_ip_check_sum;
   reg  [31:0] rx_src_ip;
   (* mark_debug = "true" *)reg  [31:0] rx_dst_ip;
-  reg         ip_checksum_cal_en;  
+  reg         ip_checksum_cal_en;
   wire [15:0] cal_check_sum;
   (* mark_debug = "true" *)reg         ip_header_check_ok;
 
@@ -133,15 +127,18 @@ module eth_udp_rx_gmii(
   reg  [15:0] cnt_data;
   reg  [4:0]  cnt_drp_data;
 
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
   assign clk125m_o = clk125m;
+
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
   assign debug_crc_check = crc_check;
 
   BUFG BUFG_pclk (
-    .O(clk125m        ), // 1-bit output: Clock output
-    .I(gmii_rx_clk    )  // 1-bit input: Clock input
-  ); 
+    .O(clk125m        ),
+    .I(gmii_rx_clk    )
+  );
 
-  //将本地MAC、IP、PORT寄存
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
   begin
@@ -156,7 +153,7 @@ module eth_udp_rx_gmii(
     local_port_reg <= local_port;
   end
 
-  //将以太网输入的接收信号寄存
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
   begin
@@ -169,7 +166,7 @@ module eth_udp_rx_gmii(
     reg_gmii_rxdv <= gmii_rxdv;
   end
 
-  //将以太网输入的接收信号寄存后打拍
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m)
   begin
     rx_data_dly1  <= reg_gmii_rxd;
@@ -178,7 +175,7 @@ module eth_udp_rx_gmii(
     rx_datav_dly2 <= rx_datav_dly1;
   end
 
-  //cnt_preamble
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
     cnt_preamble <= 4'd0;
@@ -187,7 +184,7 @@ module eth_udp_rx_gmii(
   else
     cnt_preamble <= 4'd0;
 
-  //cnt_eth_header
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
     cnt_eth_header <= 4'd0;
@@ -196,14 +193,14 @@ module eth_udp_rx_gmii(
   else
     cnt_eth_header <= 4'd0;
 
-  //eth_header
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
   begin
     rx_dst_mac  <= 48'h00_00_00_00_00_00;
     rx_src_mac  <= 48'h00_00_00_00_00_00;
     rx_eth_type <= 16'h0000;
-  end    
+  end
   else if(curr_state == RX_ETH_HEADER)
   begin
     case(cnt_eth_header)
@@ -224,6 +221,8 @@ module eth_udp_rx_gmii(
       4'd12:rx_eth_type[15:8] <= rx_data_dly2;
       4'd13:rx_eth_type[7:0]  <= rx_data_dly2;
       default: ;
+
+            // 状态机分支结束，未命中的情况由默认分支回到安全状态。
     endcase
   end
   else
@@ -231,8 +230,9 @@ module eth_udp_rx_gmii(
     rx_dst_mac  <= rx_dst_mac;
     rx_src_mac  <= rx_src_mac;
     rx_eth_type <= rx_eth_type;
-  end  
+  end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
     eth_header_check_ok <= 1'b0;
@@ -241,16 +241,16 @@ module eth_udp_rx_gmii(
   else
     eth_header_check_ok <= 1'b0;
 
-  //cnt_ip_header
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
     cnt_ip_header <= 5'd0;
   else if(curr_state == RX_IP_HEADER)
     cnt_ip_header <= cnt_ip_header + 1'b1;
   else
-    cnt_ip_header <= 5'd0;  
+    cnt_ip_header <= 5'd0;
 
-  //ip_header
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
   begin
@@ -265,7 +265,7 @@ module eth_udp_rx_gmii(
     rx_ip_check_sum               <= 16'h0;
     rx_src_ip                     <= 32'h0;
     rx_dst_ip                     <= 32'h0;
-  end    
+  end
   else if(curr_state == RX_IP_HEADER)
   begin
     case(cnt_ip_header)
@@ -288,14 +288,14 @@ module eth_udp_rx_gmii(
       5'd16:  rx_dst_ip[31:24]                                      <= rx_data_dly2;
       5'd17:  rx_dst_ip[23:16]                                      <= rx_data_dly2;
       5'd18:  rx_dst_ip[15:8]                                       <= rx_data_dly2;
-      5'd19:  rx_dst_ip[7:0]                                        <= rx_data_dly2;      
+      5'd19:  rx_dst_ip[7:0]                                        <= rx_data_dly2;
       default: ;
+
+            // 状态机分支结束，未命中的情况由默认分支回到安全状态。
     endcase
   end
 
-  //udp_header: 8byte
-  //ip_header: 20byte
-  //rx_data_length = rx_total_len - udp_header - ip_header;
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
     rx_data_length <= 16'd0;
@@ -304,6 +304,7 @@ module eth_udp_rx_gmii(
   else
     rx_data_length <= rx_data_length;
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
     ip_checksum_cal_en <= 1'b0;
@@ -315,7 +316,7 @@ module eth_udp_rx_gmii(
   ip_checksum ip_checksum(
     .clk            (clk125m           ),
     .reset_n        (~reset_p          ),
-  
+
     .cal_en         (ip_checksum_cal_en),
 
     .IP_ver         (rx_ip_ver         ),
@@ -333,33 +334,35 @@ module eth_udp_rx_gmii(
     .dst_ip         (rx_dst_ip         ),
 
     .checksum       (cal_check_sum     )
-  ); 
+  );
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
     ip_header_check_ok <= 1'b0;
-  else if({IP_ver,IP_hdr_len,IP_protocol,cal_check_sum,local_ip_reg} == 
+  else if({IP_ver,IP_hdr_len,IP_protocol,cal_check_sum,local_ip_reg} ==
           {rx_ip_ver,rx_ip_hdr_len,rx_ip_protocol,rx_ip_check_sum,rx_dst_ip})
     ip_header_check_ok <= 1'b1;
   else
-    ip_header_check_ok <= 1'b0;  
+    ip_header_check_ok <= 1'b0;
 
-  //cnt_udp_header
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
     cnt_udp_header <= 4'd0;
   else if(curr_state == RX_UDP_HEADER)
     cnt_udp_header <= cnt_udp_header + 1'b1;
   else
-    cnt_udp_header <= 4'd0;  
+    cnt_udp_header <= 4'd0;
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
   begin
     rx_src_port  <= 16'h0;
     rx_dst_port  <= 16'h0;
     rx_udp_length<= 16'h0;
-  end    
+  end
   else if(curr_state == RX_UDP_HEADER)
   begin
     case(cnt_udp_header)
@@ -370,9 +373,12 @@ module eth_udp_rx_gmii(
       4'd4: rx_udp_length[15:8] <= rx_data_dly2;
       4'd5: rx_udp_length[7:0]  <= rx_data_dly2;
       default: ;
+
+            // 状态机分支结束，未命中的情况由默认分支回到安全状态。
     endcase
   end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
     udp_header_check_ok <= 1'b0;
@@ -381,7 +387,7 @@ module eth_udp_rx_gmii(
   else
     udp_header_check_ok <= 1'b0;
 
-  //cnt_data
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
     cnt_data <= 16'd0;
@@ -390,7 +396,7 @@ module eth_udp_rx_gmii(
   else
     cnt_data <= 16'd0;
 
-  //cnt_drp_data
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
     cnt_drp_data <= 5'd0;
@@ -399,13 +405,14 @@ module eth_udp_rx_gmii(
   else
     cnt_drp_data <= 5'd0;
 
-  //FSM
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
     curr_state <= IDLE;
   else
     curr_state <= next_state;
 
+    // 组合逻辑：根据当前状态和输入信号计算下一拍控制结果。
   always@(*)
   begin
     case(curr_state)
@@ -460,7 +467,7 @@ module eth_udp_rx_gmii(
           next_state = RX_CRC;
         else
           next_state = RX_DRP_DATA;
-      
+
       RX_CRC:
         if(rx_datav_dly2 == 1'b0)
           next_state = PKT_CHECK;
@@ -472,18 +479,20 @@ module eth_udp_rx_gmii(
 
       default:next_state = IDLE;
 
+            // 状态机分支结束，未命中的情况由默认分支回到安全状态。
     endcase
-  end  
+  end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
     crc_init <= 1'b0;
   else if (rx_datav_dly1 && (~rx_datav_dly2))
     crc_init <= 1'b1;
-  else 
+  else
     crc_init <= 1'b0;
 
-  //crc_en
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
     crc_en <= 1'b0;
@@ -491,14 +500,14 @@ module eth_udp_rx_gmii(
     crc_en <= 1'b0;
   else if (curr_state != RX_PREAMBLE && rx_datav_dly2)
     crc_en <= 1'b1;
-  else 
+  else
     crc_en <= 1'b0;
 
-  //crc_data
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
     crc_data <= 8'd0;
-  else 
+  else
     crc_data <= rx_data_dly2;
 
   crc32_d8 crc32_d8
@@ -509,9 +518,10 @@ module eth_udp_rx_gmii(
     .data        (crc_data      ),
     .crc_init    (crc_init      ),
     .crc_en      (crc_en        ),
-    .crc_result  (crc_check     )//latency=1
+    .crc_result  (crc_check     )
   );
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
     reg_data_overflow <= 1'b0;
@@ -520,7 +530,7 @@ module eth_udp_rx_gmii(
   else
     reg_data_overflow <= reg_data_overflow;
 
-  //payload output
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
   begin
@@ -538,6 +548,7 @@ module eth_udp_rx_gmii(
     payload_dat_o   <= 8'h0;
   end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
   begin
@@ -552,7 +563,7 @@ module eth_udp_rx_gmii(
     exter_port <= rx_src_port;
   end
 
-  //done
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
   always@(posedge clk125m or posedge reset_p)
   if(reset_p)
   begin

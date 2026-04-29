@@ -1,10 +1,6 @@
 `timescale 1ns / 1ps
-
-// Decode the 20-byte Linux -> FPGA command payload.
-//
-// The Ethernet/UDP RX block already filters MAC/IP/UDP. This parser only checks
-// the application payload magic/version/checksum and emits one-cycle cmd_valid_o
-// pulses for valid commands.
+// UDP 命令包解析器。
+// 从以太网接收载荷中识别命令帧头、校验长度和异或校验，然后输出寄存器写或控制命令。
 
 module udp_cmd_packet_parser (
     input  wire        clk,
@@ -22,13 +18,17 @@ module udp_cmd_packet_parser (
     output reg  [15:0] cmd_addr_o,
     output reg  [31:0] cmd_data0_o,
     output reg  [31:0] cmd_data1_o
+
+// 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
 
+    // reg 信号保存跨周期状态、计数器、握手标志和流水线寄存结果。
     reg [7:0] byte_buf [0:19];
     reg [4:0] byte_cnt;
     integer i;
     reg [7:0] checksum_calc;
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             byte_cnt    <= 5'd0;
@@ -41,16 +41,13 @@ module udp_cmd_packet_parser (
         end else begin
             cmd_valid_o <= 1'b0;
 
-            // Store at most one fixed-size command. Longer payloads will fail
-            // length validation at packet end.
             if (payload_valid_i && byte_cnt < 5'd20) begin
                 byte_buf[byte_cnt] <= payload_dat_i;
                 byte_cnt <= byte_cnt + 1'b1;
             end
 
             if (one_pkt_done_i) begin
-                // XOR checksum is intentionally simple so it maps to small RTL
-                // and matches protocol::build_command_packet on Linux.
+
                 checksum_calc = 8'h00;
                 for (i = 0; i < 19; i = i + 1) begin
                     checksum_calc = checksum_calc ^ byte_buf[i];
@@ -62,7 +59,7 @@ module udp_cmd_packet_parser (
                     byte_buf[1] == 8'h4D &&
                     byte_buf[2] == 8'h01 &&
                     checksum_calc == byte_buf[19]) begin
-                    // Multi-byte fields are big-endian/network order.
+
                     cmd_valid_o <= 1'b1;
                     cmd_code_o  <= byte_buf[3];
                     cmd_seq_o   <= {byte_buf[4], byte_buf[5]};

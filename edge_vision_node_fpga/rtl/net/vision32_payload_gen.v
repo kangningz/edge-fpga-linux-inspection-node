@@ -1,4 +1,6 @@
 `timescale 1ns / 1ps
+// 32 字节视觉状态载荷发送辅助模块。
+// 按发送模块请求逐字节输出已经准备好的固定长度状态包。
 
 module vision32_payload_gen (
     input  wire        clk,
@@ -15,14 +17,19 @@ module vision32_payload_gen (
     output wire [15:0]  payload_len,
     output reg          busy,
     output reg          send_done
+
+// 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
 
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign payload_len = 16'd32;
 
+    // reg 信号保存跨周期状态、计数器、握手标志和流水线寄存结果。
     reg [255:0] pkt_buf;
     reg [5:0] byte_idx;
     reg active_send;
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             pkt_accept   <= 1'b0;
@@ -42,8 +49,7 @@ module vision32_payload_gen (
 
                 if (send_start && pkt_valid) begin
                     pkt_buf     <= pkt_data_256;
-                    // Preload byte0 because eth_udp_tx_gmii samples payload_dat_i
-                    // in the same cycle that it asserts payload_req_o.
+
                     payload_data <= pkt_data_256[0 +: 8];
                     pkt_accept  <= 1'b1;
                     active_send <= 1'b1;
@@ -55,7 +61,7 @@ module vision32_payload_gen (
 
                 if (payload_req) begin
                     if (byte_idx <= 6'd31) begin
-                        // Look ahead one byte for the next TX_DATA cycle.
+
                         payload_data <= pkt_buf[byte_idx*8 +: 8];
                     end
 

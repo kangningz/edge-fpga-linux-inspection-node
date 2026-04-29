@@ -1,3 +1,5 @@
+// 服务配置结构声明，集中描述 UDP、HTTP、路径、超时和默认寄存器参数。
+// 该头文件只保存跨模块共享的数据形状，具体读取和兼容路径处理在 config.cpp 中完成。
 #pragma once
 
 #include <cstdint>

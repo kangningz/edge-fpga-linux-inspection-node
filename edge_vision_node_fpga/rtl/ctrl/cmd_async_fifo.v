@@ -1,7 +1,13 @@
 `timescale 1ns / 1ps
+// UDP 命令跨时钟 FIFO。
+// RGMII 接收域写入解析后的命令，125 MHz 控制域读取并更新寄存器组。
 
 module cmd_async_fifo #(
+
+    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
     parameter integer DATA_WIDTH = 104,
+
+    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
     parameter integer FIFO_DEPTH = 16
 ) (
     input  wire                  rst_n,
@@ -15,8 +21,11 @@ module cmd_async_fifo #(
     input  wire                  rd_en,
     output wire [DATA_WIDTH-1:0] dout,
     output wire                  empty
+
+// 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
 
+    // wire 信号承载组合逻辑结果或子模块之间的连接。
     wire rst = ~rst_n;
 
     xpm_fifo_async #(

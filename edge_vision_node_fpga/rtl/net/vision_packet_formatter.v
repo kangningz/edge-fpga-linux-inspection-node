@@ -1,4 +1,6 @@
 `timescale 1ns / 1ps
+// 视觉遥测包格式化模块。
+// 把帧统计、状态位和校验和整理成 Linux 服务端可解析的协议字节序。
 
 module vision_packet_formatter (
     input  wire        clk,
@@ -19,8 +21,11 @@ module vision_packet_formatter (
     output reg          busy,
     output reg          done,
     output reg  [255:0] packet_data_256
+
+// 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
 
+    // reg 信号保存跨周期状态、计数器、握手标志和流水线寄存结果。
     reg [7:0]   msg_type_r;
     reg [15:0]  frame_id_r;
     reg [15:0]  status_bits_r;
@@ -38,6 +43,8 @@ module vision_packet_formatter (
     function [7:0] payload_byte;
         input [5:0] idx;
         begin
+
+            // 状态机分支：按当前阶段执行握手、计数或数据搬运动作。
             case (idx)
                 6'd0:  payload_byte = 8'h45;
                 6'd1:  payload_byte = 8'h56;
@@ -71,12 +78,16 @@ module vision_packet_formatter (
                 6'd29: payload_byte = 8'h00;
                 6'd30: payload_byte = 8'h00;
                 default: payload_byte = 8'h00;
+
+            // 状态机分支结束，未命中的情况由默认分支回到安全状态。
             endcase
         end
     endfunction
 
+    // wire 信号承载组合逻辑结果或子模块之间的连接。
     wire [7:0] curr_payload_byte = payload_byte(byte_idx);
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             msg_type_r           <= 8'd0;

@@ -1,3 +1,5 @@
+# edge_node_service 构建脚本。
+# 使用 C++17 编译后台服务，并把 include、src 与 pthread 链接关系集中声明在这里。
 cmake_minimum_required(VERSION 3.16)
 
 project(edge_node_service VERSION 1.0.0 LANGUAGES CXX)

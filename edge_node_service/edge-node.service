@@ -1,3 +1,5 @@
+# systemd 服务单元：用于在 Linux 板卡启动时自动拉起 edge_node_service。
+# 工作目录、可执行文件路径和重启策略需与实际部署目录保持一致。
 [Unit]
 Description=FPGA Edge Vision Node Service
 After=network-online.target

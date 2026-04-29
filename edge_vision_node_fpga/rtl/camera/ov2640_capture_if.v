@@ -1,4 +1,6 @@
 `timescale 1ns / 1ps
+// OV2640 采集接口。
+// 它在摄像头像素时钟域解析 vsync、href 和 8 位数据，输出帧边界、行有效和 RGB565 字节流。
 
 module ov2640_capture_if (
     input  wire rst_n,
@@ -15,8 +17,11 @@ module ov2640_capture_if (
     output reg [7:0]  pix_data,
     output reg [10:0] x_cnt,
     output reg [10:0] y_cnt
+
+// 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
 
+    // reg 信号保存跨周期状态、计数器、握手标志和流水线寄存结果。
     reg vsync_d0, vsync_d1;
     reg href_d0,  href_d1;
     reg frame_edge_valid;
@@ -25,6 +30,7 @@ module ov2640_capture_if (
     reg last_vsync_edge_was_rise;
     reg frame_seen;
 
+    // wire 信号承载组合逻辑结果或子模块之间的连接。
     wire vsync_rise;
     wire vsync_fall;
     wire href_rise;
@@ -32,7 +38,10 @@ module ov2640_capture_if (
     wire vsync_edge;
     wire frame_boundary_evt;
 
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign vsync_rise = (vsync_d0 == 1'b1) && (vsync_d1 == 1'b0);
+
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign vsync_fall = (vsync_d0 == 1'b0) && (vsync_d1 == 1'b1);
 
     assign href_rise  = (href_d0  == 1'b1) && (href_d1  == 1'b0);
@@ -42,6 +51,7 @@ module ov2640_capture_if (
                                 (( frame_start_on_rise && vsync_rise) ||
                                  (~frame_start_on_rise && vsync_fall));
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge camera_pclk or negedge rst_n) begin
         if (!rst_n) begin
             vsync_d0    <= 1'b0;
@@ -79,9 +89,6 @@ module ov2640_capture_if (
                 last_vsync_edge_was_rise <= vsync_rise;
             end
 
-            // Learn which VSYNC edge starts a frame by observing the edge that
-            // immediately precedes the first active line. This works whether
-            // VSYNC is a full-frame level or just a boundary pulse.
             if (!frame_edge_valid && href_rise && (vsync_edge || last_vsync_edge_valid)) begin
                 frame_edge_valid    <= 1'b1;
                 frame_start_on_rise <= vsync_edge ? vsync_rise : last_vsync_edge_was_rise;

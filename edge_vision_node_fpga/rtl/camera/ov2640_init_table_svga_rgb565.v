@@ -1,4 +1,6 @@
 `timescale 1ns / 1ps
+// OV2640 SVGA RGB565 初始化寄存器表。
+// 表项配置输出尺寸、色彩格式、时序和相关图像参数，最后一项作为结束标志。
 
 module ov2640_init_table_svga_rgb565 (
     input  wire [7:0] index,
@@ -7,18 +9,11 @@ module ov2640_init_table_svga_rgb565 (
     output reg        is_delay,
     output reg [23:0] delay_ms,
     output reg        table_end
+
+// 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
 
-    // Based on Espressif's official OV2640 register tables:
-    // 1) base CIF bring-up table
-    // 2) switch to SVGA
-    // 3) switch DVP output to RGB565
-    //
-    // Extra writes added here:
-    // - an initial software reset with settle delay
-    // - COM10 = 0x00 so DVP timing matches the capture path
-    // - a short delay after the final DSP/DVP reset release
-
+    // 组合逻辑：根据当前状态和输入信号计算下一拍控制结果。
     always @(*) begin
         reg_addr  = 8'h00;
         reg_data  = 8'h00;
@@ -26,23 +21,23 @@ module ov2640_init_table_svga_rgb565 (
         delay_ms  = 24'd0;
         table_end = 1'b0;
 
+            // 状态机分支：按当前阶段执行握手、计数或数据搬运动作。
         case (index)
-            8'd0: begin reg_addr = 8'hFF; reg_data = 8'h01; end // BANK_SEL = BANK_SENSOR
-            8'd1: begin reg_addr = 8'h12; reg_data = 8'h80; end // COM7 software reset
-            8'd2: begin is_delay = 1'b1; delay_ms = 24'd10; end // power-on settle after software reset
-            8'd3: begin reg_addr = 8'hFF; reg_data = 8'h00; end // BANK_SEL = BANK_DSP
+            8'd0: begin reg_addr = 8'hFF; reg_data = 8'h01; end
+            8'd1: begin reg_addr = 8'h12; reg_data = 8'h80; end
+            8'd2: begin is_delay = 1'b1; delay_ms = 24'd10; end
+            8'd3: begin reg_addr = 8'hFF; reg_data = 8'h00; end
 
-            // BASE_CIF
-            8'd4: begin reg_addr = 8'hFF; reg_data = 8'h00; end // BANK_SEL = BANK_DSP
+            8'd4: begin reg_addr = 8'hFF; reg_data = 8'h00; end
             8'd5: begin reg_addr = 8'h2C; reg_data = 8'hFF; end
             8'd6: begin reg_addr = 8'h2E; reg_data = 8'hDF; end
-            8'd7: begin reg_addr = 8'hFF; reg_data = 8'h01; end // BANK_SEL = BANK_SENSOR
+            8'd7: begin reg_addr = 8'hFF; reg_data = 8'h01; end
             8'd8: begin reg_addr = 8'h3C; reg_data = 8'h32; end
-            8'd9: begin reg_addr = 8'h11; reg_data = 8'h01; end // CLKRC = 0x01
-            8'd10: begin reg_addr = 8'h09; reg_data = 8'h02; end // COM2 = COM2_OUT_DRIVE_3x
-            8'd11: begin reg_addr = 8'h04; reg_data = 8'h28; end // REG04 = REG04_DEFAULT
-            8'd12: begin reg_addr = 8'h13; reg_data = 8'hE5; end // COM8
-            8'd13: begin reg_addr = 8'h14; reg_data = 8'h48; end // COM9
+            8'd9: begin reg_addr = 8'h11; reg_data = 8'h01; end
+            8'd10: begin reg_addr = 8'h09; reg_data = 8'h02; end
+            8'd11: begin reg_addr = 8'h04; reg_data = 8'h28; end
+            8'd12: begin reg_addr = 8'h13; reg_data = 8'hE5; end
+            8'd13: begin reg_addr = 8'h14; reg_data = 8'h48; end
             8'd14: begin reg_addr = 8'h2C; reg_data = 8'h0C; end
             8'd15: begin reg_addr = 8'h33; reg_data = 8'h78; end
             8'd16: begin reg_addr = 8'h3A; reg_data = 8'h33; end
@@ -83,7 +78,7 @@ module ov2640_init_table_svga_rgb565 (
             8'd51: begin reg_addr = 8'h5A; reg_data = 8'h57; end
             8'd52: begin reg_addr = 8'h4F; reg_data = 8'hBB; end
             8'd53: begin reg_addr = 8'h50; reg_data = 8'h9C; end
-            8'd54: begin reg_addr = 8'h12; reg_data = 8'h20; end // COM7 = CIF
+            8'd54: begin reg_addr = 8'h12; reg_data = 8'h20; end
             8'd55: begin reg_addr = 8'h17; reg_data = 8'h11; end
             8'd56: begin reg_addr = 8'h18; reg_data = 8'h43; end
             8'd57: begin reg_addr = 8'h19; reg_data = 8'h00; end
@@ -94,7 +89,7 @@ module ov2640_init_table_svga_rgb565 (
             8'd62: begin reg_addr = 8'h50; reg_data = 8'hA8; end
             8'd63: begin reg_addr = 8'h6D; reg_data = 8'h00; end
             8'd64: begin reg_addr = 8'h3D; reg_data = 8'h38; end
-            8'd65: begin reg_addr = 8'hFF; reg_data = 8'h00; end // BANK_SEL = BANK_DSP
+            8'd65: begin reg_addr = 8'hFF; reg_data = 8'h00; end
             8'd66: begin reg_addr = 8'hE5; reg_data = 8'h7F; end
             8'd67: begin reg_addr = 8'hF9; reg_data = 8'hC0; end
             8'd68: begin reg_addr = 8'h41; reg_data = 8'h24; end
@@ -187,17 +182,16 @@ module ov2640_init_table_svga_rgb565 (
             8'd155: begin reg_addr = 8'hE5; reg_data = 8'h1F; end
             8'd156: begin reg_addr = 8'hE1; reg_data = 8'h67; end
             8'd157: begin reg_addr = 8'hDD; reg_data = 8'h7F; end
-            8'd158: begin reg_addr = 8'hDA; reg_data = 8'h00; end // IMAGE_MODE = YUV422
+            8'd158: begin reg_addr = 8'hDA; reg_data = 8'h00; end
             8'd159: begin reg_addr = 8'hE0; reg_data = 8'h00; end
-            8'd160: begin reg_addr = 8'h05; reg_data = 8'h00; end // DSP enabled
+            8'd160: begin reg_addr = 8'h05; reg_data = 8'h00; end
 
-            // TO_SVGA
-            8'd161: begin reg_addr = 8'hFF; reg_data = 8'h00; end // BANK_SEL = BANK_DSP
-            8'd162: begin reg_addr = 8'h05; reg_data = 8'h01; end // R_BYPASS = DSP bypass before window update
-            8'd163: begin reg_addr = 8'hFF; reg_data = 8'h01; end // BANK_SEL = BANK_SENSOR
-            8'd164: begin reg_addr = 8'h12; reg_data = 8'h40; end // COM7 = SVGA
-            8'd165: begin reg_addr = 8'h03; reg_data = 8'h0A; end // COM1
-            8'd166: begin reg_addr = 8'h32; reg_data = 8'h09; end // REG32 = SVGA
+            8'd161: begin reg_addr = 8'hFF; reg_data = 8'h00; end
+            8'd162: begin reg_addr = 8'h05; reg_data = 8'h01; end
+            8'd163: begin reg_addr = 8'hFF; reg_data = 8'h01; end
+            8'd164: begin reg_addr = 8'h12; reg_data = 8'h40; end
+            8'd165: begin reg_addr = 8'h03; reg_data = 8'h0A; end
+            8'd166: begin reg_addr = 8'h32; reg_data = 8'h09; end
             8'd167: begin reg_addr = 8'h17; reg_data = 8'h11; end
             8'd168: begin reg_addr = 8'h18; reg_data = 8'h43; end
             8'd169: begin reg_addr = 8'h19; reg_data = 8'h00; end
@@ -220,44 +214,45 @@ module ov2640_init_table_svga_rgb565 (
             8'd186: begin reg_addr = 8'h0E; reg_data = 8'h41; end
             8'd187: begin reg_addr = 8'h42; reg_data = 8'h03; end
             8'd188: begin reg_addr = 8'h4C; reg_data = 8'h00; end
-            8'd189: begin reg_addr = 8'hFF; reg_data = 8'h00; end // BANK_SEL = BANK_DSP
-            8'd190: begin reg_addr = 8'hE0; reg_data = 8'h04; end // RESET = DVP
-            8'd191: begin reg_addr = 8'hC0; reg_data = 8'h64; end // HSIZE8
-            8'd192: begin reg_addr = 8'hC1; reg_data = 8'h4B; end // VSIZE8
-            8'd193: begin reg_addr = 8'h8C; reg_data = 8'h00; end // SIZEL
-            8'd194: begin reg_addr = 8'h51; reg_data = 8'hC8; end // HSIZE
-            8'd195: begin reg_addr = 8'h52; reg_data = 8'h96; end // VSIZE
+            8'd189: begin reg_addr = 8'hFF; reg_data = 8'h00; end
+            8'd190: begin reg_addr = 8'hE0; reg_data = 8'h04; end
+            8'd191: begin reg_addr = 8'hC0; reg_data = 8'h64; end
+            8'd192: begin reg_addr = 8'hC1; reg_data = 8'h4B; end
+            8'd193: begin reg_addr = 8'h8C; reg_data = 8'h00; end
+            8'd194: begin reg_addr = 8'h51; reg_data = 8'hC8; end
+            8'd195: begin reg_addr = 8'h52; reg_data = 8'h96; end
             8'd196: begin reg_addr = 8'h53; reg_data = 8'h00; end
             8'd197: begin reg_addr = 8'h54; reg_data = 8'h00; end
             8'd198: begin reg_addr = 8'h55; reg_data = 8'h00; end
             8'd199: begin reg_addr = 8'h57; reg_data = 8'h00; end
-            8'd200: begin reg_addr = 8'h5A; reg_data = 8'hC8; end // ZMOW = 800 / 4
-            8'd201: begin reg_addr = 8'h5B; reg_data = 8'h96; end // ZMOH = 600 / 4
-            8'd202: begin reg_addr = 8'h5C; reg_data = 8'h00; end // ZMHH
-            8'd203: begin reg_addr = 8'h86; reg_data = 8'h3D; end // CTRL2
-            8'd204: begin reg_addr = 8'h50; reg_data = 8'h80; end // CTRLI
-            8'd205: begin reg_addr = 8'hFF; reg_data = 8'h01; end // BANK_SEL = BANK_SENSOR
-            8'd206: begin reg_addr = 8'h11; reg_data = 8'h87; end // CLKRC from upstream non-JPEG clock config
-            8'd207: begin reg_addr = 8'hFF; reg_data = 8'h00; end // BANK_SEL = BANK_DSP
-            8'd208: begin reg_addr = 8'hD3; reg_data = 8'h88; end // R_DVP_SP = auto PCLK divide
-            8'd209: begin reg_addr = 8'h05; reg_data = 8'h00; end // R_BYPASS = DSP enable
+            8'd200: begin reg_addr = 8'h5A; reg_data = 8'hC8; end
+            8'd201: begin reg_addr = 8'h5B; reg_data = 8'h96; end
+            8'd202: begin reg_addr = 8'h5C; reg_data = 8'h00; end
+            8'd203: begin reg_addr = 8'h86; reg_data = 8'h3D; end
+            8'd204: begin reg_addr = 8'h50; reg_data = 8'h80; end
+            8'd205: begin reg_addr = 8'hFF; reg_data = 8'h01; end
+            8'd206: begin reg_addr = 8'h11; reg_data = 8'h87; end
+            8'd207: begin reg_addr = 8'hFF; reg_data = 8'h00; end
+            8'd208: begin reg_addr = 8'hD3; reg_data = 8'h88; end
+            8'd209: begin reg_addr = 8'h05; reg_data = 8'h00; end
 
-            // RGB565
-            8'd210: begin reg_addr = 8'hFF; reg_data = 8'h00; end // BANK_SEL = BANK_DSP
-            8'd211: begin reg_addr = 8'hE0; reg_data = 8'h04; end // RESET = DVP
-            8'd212: begin reg_addr = 8'hDA; reg_data = 8'h08; end // IMAGE_MODE = RGB565
-            8'd213: begin reg_addr = 8'hC2; reg_data = 8'h0E; end // CTRL0 = YUV422/YUV/RGB modules on, enable RGB path
+            8'd210: begin reg_addr = 8'hFF; reg_data = 8'h00; end
+            8'd211: begin reg_addr = 8'hE0; reg_data = 8'h04; end
+            8'd212: begin reg_addr = 8'hDA; reg_data = 8'h08; end
+            8'd213: begin reg_addr = 8'hC2; reg_data = 8'h0E; end
             8'd214: begin reg_addr = 8'hD7; reg_data = 8'h03; end
             8'd215: begin reg_addr = 8'hE1; reg_data = 8'h77; end
-            8'd216: begin reg_addr = 8'hE0; reg_data = 8'h00; end // release DVP reset
-            8'd217: begin reg_addr = 8'hFF; reg_data = 8'h01; end // BANK_SEL = BANK_SENSOR
-            8'd218: begin reg_addr = 8'h15; reg_data = 8'h00; end // COM10 = positive VSYNC/HREF, falling-edge update
-            8'd219: begin reg_addr = 8'hFF; reg_data = 8'h00; end // BANK_SEL = BANK_DSP
-            8'd220: begin is_delay = 1'b1; delay_ms = 24'd5; end // allow DSP/DVP path to settle
+            8'd216: begin reg_addr = 8'hE0; reg_data = 8'h00; end
+            8'd217: begin reg_addr = 8'hFF; reg_data = 8'h01; end
+            8'd218: begin reg_addr = 8'h15; reg_data = 8'h00; end
+            8'd219: begin reg_addr = 8'hFF; reg_data = 8'h00; end
+            8'd220: begin is_delay = 1'b1; delay_ms = 24'd5; end
 
             default: begin
                 table_end = 1'b1;
             end
+
+            // 状态机分支结束，未命中的情况由默认分支回到安全状态。
         endcase
     end
 

@@ -1,4 +1,6 @@
 `timescale 1ns / 1ps
+// OV2640 到 DDR3 帧缓冲验证顶层。
+// 用于单独验证摄像头初始化、采集、RGB565 打包和 DDR3 写入/读取链路。
 
 module top_ov2640_ddr3_framebuffer (
     input  wire FPGA_CLK,
@@ -39,13 +41,17 @@ module top_ov2640_ddr3_framebuffer (
     output reg        LED6,
     output reg        LED7,
     output wire       BEEP
+
+// 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
 
+    // 本地常量定义状态编码、计数上限或协议字段，避免魔法数字散落在逻辑中。
     localparam integer FRAME_WIDTH  = 800;
     localparam integer FRAME_HEIGHT = 600;
     localparam integer FRAME_BYTES  = FRAME_WIDTH * FRAME_HEIGHT * 2;
     localparam integer INIT_WAIT_CYCLES = 1_000_000;
 
+    // wire 信号承载组合逻辑结果或子模块之间的连接。
     wire manual_rst_n = S0;
     wire sys_clk;
     wire rst_n_sys;
@@ -61,6 +67,8 @@ module top_ov2640_ddr3_framebuffer (
         .cam_xclk    (cam_xclk_int),
         .rst_n_sys   (rst_n_sys)
     );
+
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign camera_xclk = cam_xclk_int;
 
     wire ddr3_clk200m;
@@ -72,6 +80,7 @@ module top_ov2640_ddr3_framebuffer (
         .locked  (ddr3_clk_locked)
     );
 
+    // reg 信号保存跨周期状态、计数器、握手标志和流水线寄存结果。
     reg [19:0] init_wait_cnt;
     reg init_start_pulse;
     reg init_started;
@@ -81,6 +90,7 @@ module top_ov2640_ddr3_framebuffer (
     wire cam_init_done;
     wire cam_init_error;
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge sys_clk or negedge rst_n_sys) begin
         if (!rst_n_sys) begin
             init_wait_cnt         <= 20'd0;
@@ -167,6 +177,8 @@ module top_ov2640_ddr3_framebuffer (
     );
 
     reg capture_enable_sys;
+
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge sys_clk or negedge rst_n_sys) begin
         if (!rst_n_sys) begin
             capture_enable_sys <= 1'b0;
@@ -246,9 +258,12 @@ module top_ov2640_ddr3_framebuffer (
         .wrfifo_full_dbg   (wrfifo_full_dbg)
     );
 
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign ddr3_clk_locked_dbg = ddr3_clk_locked;
 
     reg rd_seen;
+
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge sys_clk or negedge rst_n_sys) begin
         if (!rst_n_sys) begin
             rd_seen <= 1'b0;
@@ -258,6 +273,8 @@ module top_ov2640_ddr3_framebuffer (
     end
 
     reg [25:0] hb_cnt;
+
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge sys_clk or negedge rst_n_sys) begin
         if (!rst_n_sys) begin
             hb_cnt <= 26'd0;

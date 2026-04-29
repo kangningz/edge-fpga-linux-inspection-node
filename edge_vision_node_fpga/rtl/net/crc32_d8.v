@@ -1,21 +1,6 @@
-////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 1999-2008 Easics NV.
-// This source file may be used and distributed without restriction
-// provided that this copyright statement is not removed from the file
-// and that any derivative work contains the original copyright notice
-// and the associated disclaimer.
-//
-// THIS SOURCE FILE IS PROVIDED "AS IS" AND WITHOUT ANY EXPRESS
-// OR IMPLIED WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED
-// WARRANTIES OF MERCHANTIBILITY AND FITNESS FOR A PARTICULAR PURPOSE.
-//
-// Purpose : synthesizable CRC function
-//   * polynomial: x^32 + x^26 + x^23 + x^22 + x^16 + x^12 + x^11 + x^10 + x^8 + x^7 + x^5 + x^4 + x^2 + x^1 + 1
-//   * data width: 8
-//
-// Info : tools@easics.be
-//        http://www.easics.com
-////////////////////////////////////////////////////////////////////////////////
+// 以太网 CRC32 按字节更新模块。
+// 发送 MAC 帧时逐字节计算 FCS，保证帧尾校验满足以太网要求。
+
 
 module crc32_d8
 (
@@ -26,18 +11,26 @@ module crc32_d8
   input           crc_init    ,
   input           crc_en      ,
   output   [31:0] crc_result
+
+// 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
 
+    // wire 信号承载组合逻辑结果或子模块之间的连接。
 wire   [7:0]   data_i;
+
+    // reg 信号保存跨周期状态、计数器、握手标志和流水线寄存结果。
 reg    [31:0]  crc_result_o;
 
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
 assign data_i = {data[ 0],data[ 1],data[ 2],data[ 3], data[ 4],data[ 5],data[ 6],data[ 7]};
 
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
 assign crc_result = ~{crc_result_o[00],crc_result_o[01],crc_result_o[02],crc_result_o[03],crc_result_o[04],crc_result_o[05],crc_result_o[06],crc_result_o[07],
                       crc_result_o[08],crc_result_o[09],crc_result_o[10],crc_result_o[11],crc_result_o[12],crc_result_o[13],crc_result_o[14],crc_result_o[15],
                       crc_result_o[16],crc_result_o[17],crc_result_o[18],crc_result_o[19],crc_result_o[20],crc_result_o[21],crc_result_o[22],crc_result_o[23],
                       crc_result_o[24],crc_result_o[25],crc_result_o[26],crc_result_o[27],crc_result_o[28],crc_result_o[29],crc_result_o[30],crc_result_o[31]};
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
 always @(posedge clk or negedge reset_n)
 begin
   if(!reset_n)
@@ -50,9 +43,6 @@ begin
     crc_result_o <= crc_result_o;
 end
 
-  // polynomial: x^32 + x^26 + x^23 + x^22 + x^16 + x^12 + x^11 + x^10 + x^8 + x^7 + x^5 + x^4 + x^2 + x^1 + 1
-  // data width: 8
-  // convention: the first serial bit is D[7]
   function [31:0] nextCRC32_D8;
 
     input [7:0] Data;

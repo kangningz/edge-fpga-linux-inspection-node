@@ -1,4 +1,6 @@
 `timescale 1ns / 1ps
+// 帧统计遥测包构建模块。
+// 把统计 FIFO 中的帧信息和状态位打包为固定 32 字节 UDP 状态载荷。
 
 module frame_stats_packet_builder (
     input  wire        clk,
@@ -17,17 +19,11 @@ module frame_stats_packet_builder (
     input  wire         tx_ready,
 
     output wire         pkt_busy
+
+// 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
 
-    // stats_dout mapping:
-    // [159:144] frame_id
-    // [143:112] timestamp_low
-    // [111:96]  frame_width
-    // [95:80]   frame_height
-    // [79:48]   active_pixel_count
-    // [47:16]   roi_sum
-    // [15:0]    bright_count
-
+    // reg 信号保存跨周期状态、计数器、握手标志和流水线寄存结果。
     reg sending;
     reg [5:0] pkt_idx;
     reg [7:0] packet_mem [0:31];
@@ -43,11 +39,15 @@ module frame_stats_packet_builder (
     reg [31:0] roi_sum_r;
     reg [15:0] bright_cnt_r;
 
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign tx_valid = sending;
+
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign tx_data  = packet_mem[pkt_idx];
     assign tx_last  = sending && (pkt_idx == 6'd31);
     assign pkt_busy = sending;
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             sending    <= 1'b0;
@@ -69,10 +69,10 @@ module frame_stats_packet_builder (
                     roi_sum_r      = stats_dout[47:16];
                     bright_cnt_r   = stats_dout[15:0];
 
-                    packet_mem[0]  = 8'h45; // 'E'
-                    packet_mem[1]  = 8'h56; // 'V'
-                    packet_mem[2]  = 8'h01; // version
-                    packet_mem[3]  = 8'h01; // msg_type = frame_stats
+                    packet_mem[0]  = 8'h45;
+                    packet_mem[1]  = 8'h56;
+                    packet_mem[2]  = 8'h01;
+                    packet_mem[3]  = 8'h01;
 
                     packet_mem[4]  = frame_id_r[15:8];
                     packet_mem[5]  = frame_id_r[7:0];

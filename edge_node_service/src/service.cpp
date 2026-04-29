@@ -1,3 +1,5 @@
+// 边缘节点服务实现。
+// 该文件把 FPGA UDP 数据面、HTTP 控制面、预览图像缓存和告警事件管理连接在一起。
 #include "service.hpp"
 
 #include <algorithm>
@@ -17,6 +19,7 @@ namespace {
 constexpr int kHttpBacklog = 8;
 constexpr auto kPreviewSnapshotInterval = std::chrono::seconds(1);
 
+// 循环发送完整缓冲区，处理 EINTR 后继续写，避免 HTTP 响应被短写截断。
 bool send_all(int fd, const char* data, std::size_t size) {
     std::size_t sent_total = 0;
     while (sent_total < size) {
@@ -54,6 +57,7 @@ std::string build_binary_http_response(
     return response;
 }
 
+// 先写临时文件再替换目标文件，降低预览快照被半写入读取的概率。
 bool write_binary_file(const std::filesystem::path& path, const std::vector<std::uint8_t>& data) {
     std::error_code ec;
     std::filesystem::create_directories(path.parent_path(), ec);
@@ -83,6 +87,7 @@ bool write_binary_file(const std::filesystem::path& path, const std::vector<std:
     return !ec;
 }
 
+// 把数据头部转为十六进制文本，用于日志中快速确认 UDP 分片格式。
 std::string hex_prefix(const std::vector<std::uint8_t>& data, std::size_t n) {
     std::ostringstream oss;
     oss << std::hex << std::setfill('0');
@@ -96,6 +101,7 @@ std::string hex_prefix(const std::vector<std::uint8_t>& data, std::size_t n) {
     return oss.str();
 }
 
+// 把数据尾部转为十六进制文本，用于排查包尾校验和载荷截断问题。
 std::string hex_suffix(const std::vector<std::uint8_t>& data, std::size_t n) {
     std::ostringstream oss;
     oss << std::hex << std::setfill('0');
@@ -110,6 +116,7 @@ std::string hex_suffix(const std::vector<std::uint8_t>& data, std::size_t n) {
     return oss.str();
 }
 
+// 把系统时间转为面板展示用的本地时间字符串。
 std::string format_system_time(const std::chrono::system_clock::time_point& tp) {
     if (tp.time_since_epoch().count() == 0) {
         return "n/a";
@@ -128,6 +135,7 @@ std::string format_system_time(const std::chrono::system_clock::time_point& tp) 
     return oss.str();
 }
 
+// 把系统时间转为适合作为文件名片段的紧凑时间戳。
 std::string compact_system_time(const std::chrono::system_clock::time_point& tp) {
     const auto t = std::chrono::system_clock::to_time_t(tp);
     std::tm tm_buf{};
@@ -142,6 +150,7 @@ std::string compact_system_time(const std::chrono::system_clock::time_point& tp)
     return oss.str();
 }
 
+// 根据静态文件后缀推断 HTTP Content-Type。
 std::string guess_content_type(const std::string& path) {
     if (path.size() >= 5 && path.substr(path.size() - 5) == ".html") {
         return "text/html; charset=utf-8";
@@ -162,11 +171,13 @@ std::string guess_content_type(const std::string& path) {
     return "text/plain; charset=utf-8";
 }
 
+// 按小端序写入 16 位整数，BMP 文件头使用该字节序。
 void write_le16(std::uint8_t* p, std::uint16_t value) {
     p[0] = static_cast<std::uint8_t>(value & 0xFFU);
     p[1] = static_cast<std::uint8_t>((value >> 8U) & 0xFFU);
 }
 
+// 按小端序写入 32 位整数，BMP 文件头使用该字节序。
 void write_le32(std::uint8_t* p, std::uint32_t value) {
     p[0] = static_cast<std::uint8_t>(value & 0xFFU);
     p[1] = static_cast<std::uint8_t>((value >> 8U) & 0xFFU);
@@ -199,8 +210,6 @@ std::vector<std::uint8_t> rgb565_to_bmp(
     write_le16(&bmp[28], 24U);
     write_le32(&bmp[34], pixel_bytes);
 
-    // BMP stores rows bottom-up and uses BGR byte order, so the service
-    // flips the FPGA RGB565 frame vertically while expanding it to 24-bit BGR.
     for (std::uint32_t y = 0; y < height; ++y) {
         const std::uint32_t src_y = height - 1U - y;
         const std::uint32_t src_row_off = src_y * static_cast<std::uint32_t>(width) * 2U;
@@ -270,6 +279,7 @@ std::vector<std::uint8_t> rgb565_swapped_to_bmp(
     return bmp;
 }
 
+// 把整数钳位到 8 位颜色通道范围。
 std::uint8_t clamp_u8(int value) {
     return static_cast<std::uint8_t>(std::clamp(value, 0, 255));
 }
@@ -409,7 +419,7 @@ std::vector<std::uint8_t> build_preview_debug_image(
     return rgb565_to_bmp(pixels, width, height);
 }
 
-} // namespace
+}
 
 EdgeNodeService::EdgeNodeService(std::string config_path, ServiceConfig config, Logger& logger)
     : config_path_(std::move(config_path)),
@@ -425,10 +435,12 @@ EdgeNodeService::EdgeNodeService(std::string config_path, ServiceConfig config, 
     current_params_.tx_mode = config_.default_tx_mode;
 }
 
+// 析构时停止后台线程并关闭套接字，防止资源泄漏。
 EdgeNodeService::~EdgeNodeService() {
     stop();
 }
 
+// 启动服务：打开 UDP/HTTP 套接字，拉起接收、HTTP 和看门狗线程。
 bool EdgeNodeService::start() {
     std::string err;
     if (!open_sockets(err)) {
@@ -437,8 +449,7 @@ bool EdgeNodeService::start() {
     }
 
     stop_requested_.store(false);
-    // The service is split into three long-running workers:
-    // UDP receive, HTTP/Web API, and watchdog/config reload.
+
     rx_thread_ = std::thread(&EdgeNodeService::rx_loop, this);
     watchdog_thread_ = std::thread(&EdgeNodeService::watchdog_loop, this);
     http_thread_ = std::thread(&EdgeNodeService::http_loop, this);
@@ -465,6 +476,7 @@ bool EdgeNodeService::start() {
     return true;
 }
 
+// 请求所有后台线程退出，并等待线程结束后释放网络资源。
 void EdgeNodeService::stop() {
     const bool already_stopping = stop_requested_.exchange(true);
     if (already_stopping) {
@@ -486,6 +498,7 @@ void EdgeNodeService::stop() {
     logger_.info("service stopped");
 }
 
+// 创建并绑定 UDP 接收、UDP 发送和 HTTP 监听套接字。
 bool EdgeNodeService::open_sockets(std::string& err) {
     std::lock_guard<std::mutex> lock(config_mutex_);
 
@@ -551,6 +564,7 @@ bool EdgeNodeService::open_sockets(std::string& err) {
     return true;
 }
 
+// 关闭所有已经打开的套接字，把文件描述符恢复为无效值。
 void EdgeNodeService::close_sockets() {
     const int sockets[] = {rx_socket_, tx_socket_, http_socket_};
     for (int fd : sockets) {
@@ -563,6 +577,7 @@ void EdgeNodeService::close_sockets() {
     http_socket_ = -1;
 }
 
+// 记录最近事件并限制队列长度，供状态接口和调试页面展示。
 void EdgeNodeService::record_event(const std::string& event_text) {
     std::lock_guard<std::mutex> lock(state_mutex_);
     state_.recent_events.push_front(now_iso8601() + " " + event_text);
@@ -571,6 +586,7 @@ void EdgeNodeService::record_event(const std::string& event_text) {
     }
 }
 
+// UDP 接收主循环，区分 32 字节遥测包和预览分片并更新共享状态。
 void EdgeNodeService::rx_loop() {
     std::array<std::uint8_t, 2048> buffer{};
 
@@ -603,9 +619,7 @@ void EdgeNodeService::rx_loop() {
 
         protocol::FrameStatsPacket packet;
         std::string parse_err;
-        // First try the compact 32-byte telemetry format. These packets update
-        // system status, ROI statistics, and alarm state; they are independent
-        // from the larger image-preview chunks below.
+
         if (protocol::parse_frame_stats_packet(buffer.data(), static_cast<std::size_t>(received), packet, parse_err)) {
             RuntimeParams params_snapshot;
             {
@@ -631,8 +645,7 @@ void EdgeNodeService::rx_loop() {
             bool should_record_alarm = false;
             {
                 std::lock_guard<std::mutex> alarm_lock(alarm_mutex_);
-                // Record only the rising edge of alarm_active. This prevents
-                // one sustained alarm condition from flooding the event list.
+
                 should_record_alarm = alarm_active && !alarm_state_.last_alarm_active;
                 alarm_state_.last_alarm_active = alarm_active;
             }
@@ -654,9 +667,7 @@ void EdgeNodeService::rx_loop() {
                 std::string snapshot_ext = ".bin";
                 {
                     std::lock_guard<std::mutex> preview_lock(preview_mutex_);
-                    // Alarm events reuse the latest assembled preview frame as
-                    // a snapshot. The telemetry packet and preview frame may be
-                    // from nearby, not necessarily identical, frame IDs.
+
                     if (preview_.available && !preview_.latest_image.empty()) {
                         snapshot_image = preview_.latest_image;
                         if (preview_.latest_content_type == "image/bmp") {
@@ -680,6 +691,8 @@ void EdgeNodeService::rx_loop() {
                         std::filesystem::path(cfg_copy.static_dir) /
                         "alarm_snapshots" /
                         snapshot_name;
+
+// 先写临时文件再替换目标文件，降低预览快照被半写入读取的概率。
                     if (write_binary_file(snapshot_path, snapshot_image)) {
                         alarm_event.image_url = "/static/alarm_snapshots/" + snapshot_name;
                     } else {
@@ -718,8 +731,7 @@ void EdgeNodeService::rx_loop() {
 
         protocol::PreviewChunkPacket preview_packet;
         std::string preview_err;
-        // If the datagram is not telemetry, treat it as a preview chunk. FPGA
-        // splits large RGB565/JPEG frames into ordered chunks to fit UDP MTU.
+
         if (protocol::parse_preview_chunk_packet(buffer.data(), static_cast<std::size_t>(received), preview_packet, preview_err)) {
             {
                 std::lock_guard<std::mutex> lock(state_mutex_);
@@ -748,8 +760,7 @@ void EdgeNodeService::rx_loop() {
                 ++preview_.preview_packets;
 
                 if (preview_packet.flags & 0x01U) {
-                    // Start-of-frame chunk resets assembly. Any partial frame
-                    // is discarded because UDP does not guarantee delivery.
+
                     preview_assembly_.active = true;
                     preview_assembly_.frame_id = preview_packet.frame_id;
                     preview_assembly_.msg_type = preview_packet.msg_type;
@@ -776,8 +787,7 @@ void EdgeNodeService::rx_loop() {
 
                         if (preview_assembly_.msg_type == protocol::kPreviewMsgTypeRgb565) {
                             if (completed_payload.size() >= 4) {
-                                // RGB565 preview payload starts with width and
-                                // height, then width*height*2 raw pixel bytes.
+
                                 completed_width = protocol::read_be16(completed_payload.data());
                                 completed_height = protocol::read_be16(completed_payload.data() + 2);
                                 const std::size_t expected_bytes =
@@ -832,8 +842,7 @@ void EdgeNodeService::rx_loop() {
                         preview_assembly_.active = false;
                     }
                 } else if (!(preview_packet.flags & 0x01U)) {
-                    // Out-of-order or missing chunks are not recoverable with
-                    // this simple protocol, so drop the partial frame.
+
                     preview_assembly_.active = false;
                     preview_assembly_.buffer.clear();
                 }
@@ -860,6 +869,8 @@ void EdgeNodeService::rx_loop() {
                         cfg_copy = config_;
                     }
                     const auto preview_path = std::filesystem::path(cfg_copy.static_dir) / completed_file_name;
+
+// 先写临时文件再替换目标文件，降低预览快照被半写入读取的概率。
                     if (!write_binary_file(preview_path, completed_image)) {
                         logger_.warn("failed to write preview snapshot to " + preview_path.string());
                     }
@@ -877,6 +888,7 @@ void EdgeNodeService::rx_loop() {
     }
 }
 
+// 周期检查链路超时和配置文件修改，实现掉线标记与配置热加载。
 void EdgeNodeService::watchdog_loop() {
     auto last_reload_check = std::chrono::steady_clock::now();
 
@@ -897,6 +909,7 @@ void EdgeNodeService::watchdog_loop() {
     }
 }
 
+// HTTP 监听循环，为浏览器面板和 REST 控制接口提供请求响应。
 void EdgeNodeService::http_loop() {
     while (!stop_requested_.load()) {
         sockaddr_in client{};
@@ -917,6 +930,8 @@ void EdgeNodeService::http_loop() {
         if (n > 0) {
             request_buf[static_cast<std::size_t>(n)] = '\0';
             const std::string response = handle_http_request(request_buf.data());
+
+// 循环发送完整缓冲区，处理 EINTR 后继续写，避免 HTTP 响应被短写截断。
             if (!send_all(client_fd, response.data(), response.size())) {
                 logger_.warn("http send failed: " + std::string(std::strerror(errno)));
             }
@@ -925,6 +940,7 @@ void EdgeNodeService::http_loop() {
     }
 }
 
+// 根据最近 UDP 包时间判断 FPGA 是否离线，并写入运行状态。
 void EdgeNodeService::mark_offline_if_needed() {
     std::lock_guard<std::mutex> config_lock(config_mutex_);
     const auto timeout = std::chrono::milliseconds(config_.offline_timeout_ms);
@@ -946,6 +962,7 @@ void EdgeNodeService::mark_offline_if_needed() {
     }
 }
 
+// 检测配置文件时间戳变化，重新加载可热更新的服务参数。
 void EdgeNodeService::reload_config_if_needed() {
     ServiceConfig reloaded;
     std::string err;
@@ -959,6 +976,7 @@ void EdgeNodeService::reload_config_if_needed() {
         return;
     }
 
+// 读取配置文件并覆盖默认配置，缺省字段保留结构体中的默认值。
     if (!load_config_file(config_path_, reloaded, err)) {
         logger_.warn("config reload failed: " + err);
         return;
@@ -992,8 +1010,6 @@ bool EdgeNodeService::send_command_packet(
     std::lock_guard<std::mutex> send_lock(send_mutex_);
     std::lock_guard<std::mutex> config_lock(config_mutex_);
 
-    // All FPGA controls use the same UDP command packet. Simple commands leave
-    // addr/data zero; register writes encode the target register in addr.
     const auto packet = protocol::build_command_packet(code, next_seq_, addr, data0, data1);
 
     sockaddr_in target{};
@@ -1034,14 +1050,17 @@ bool EdgeNodeService::send_command_packet(
     return true;
 }
 
+// 发送不携带寄存器地址和数据的简单控制命令。
 bool EdgeNodeService::send_simple_command(protocol::CommandCode code, std::string& err) {
     return send_command_packet(code, 0, 0, 0, err);
 }
 
+// 向 FPGA 运行寄存器写入一个 32 位值。
 bool EdgeNodeService::write_register(std::uint16_t addr, std::uint32_t value, std::string& err) {
     return send_command_packet(protocol::CommandCode::WriteReg, addr, value, 0, err);
 }
 
+// 把 Web/API 传入的命令名映射为协议命令码并下发。
 bool EdgeNodeService::send_named_command(const std::string& command_name, std::string& err) {
     if (command_name == "query_status") {
         return send_simple_command(protocol::CommandCode::QueryStatus, err);
@@ -1069,6 +1088,7 @@ bool EdgeNodeService::send_named_command(const std::string& command_name, std::s
     return false;
 }
 
+// 按配置文件中的默认值初始化 FPGA 运行寄存器。
 bool EdgeNodeService::apply_default_registers(std::string& err) {
     ServiceConfig cfg_copy;
     {
@@ -1119,8 +1139,7 @@ bool EdgeNodeService::apply_runtime_params(
     std::uint32_t alarm_count_threshold,
     std::uint32_t tx_mode,
     std::string& err) {
-    // Keep parameter writes ordered. The FPGA register bank mirrors these
-    // values and the camera-domain logic latches them cleanly at frame start.
+
     if (!write_register(protocol::RegRoiX, roi_x, err)) {
         return false;
     }
@@ -1155,6 +1174,7 @@ bool EdgeNodeService::apply_runtime_params(
     return true;
 }
 
+// 汇总运行状态、预览状态、告警历史和当前参数，生成前端轮询使用的 JSON。
 std::string EdgeNodeService::status_json() const {
     RuntimeState state_copy;
     ServiceConfig cfg_copy;
@@ -1175,9 +1195,7 @@ std::string EdgeNodeService::status_json() const {
     bool preview_has_soi = false;
     bool preview_has_eoi = false;
     {
-        // Copy shared state under locks, then build JSON from local snapshots.
-        // This keeps HTTP response generation from blocking UDP receive for too
-        // long while still returning a consistent view to the Web page.
+
         std::lock_guard<std::mutex> state_lock(state_mutex_);
         state_copy = state_;
     }
@@ -1308,6 +1326,7 @@ std::string EdgeNodeService::status_json() const {
     return oss.str();
 }
 
+// 读取仪表盘静态页面，读取失败时返回内置的最小 HTML。
 std::string EdgeNodeService::dashboard_html() const {
     ServiceConfig cfg_copy;
     {
@@ -1339,6 +1358,7 @@ std::string EdgeNodeService::build_http_response(
     return oss.str();
 }
 
+// 解析 HTTP 请求路径和查询参数，分发到状态、预览和控制接口。
 std::string EdgeNodeService::handle_http_request(const std::string& request) {
     std::istringstream iss(request);
     std::string method;
@@ -1526,6 +1546,7 @@ std::string EdgeNodeService::handle_http_request(const std::string& request) {
     return build_http_response("404 Not Found", "text/plain; charset=utf-8", "not found");
 }
 
+// 转义 JSON 字符串中的特殊字符，避免状态文本破坏响应格式。
 std::string EdgeNodeService::json_escape(const std::string& text) {
     std::ostringstream oss;
     for (char ch : text) {
@@ -1541,6 +1562,7 @@ std::string EdgeNodeService::json_escape(const std::string& text) {
     return oss.str();
 }
 
+// 生成告警事件使用的 ISO 风格本地时间戳。
 std::string EdgeNodeService::now_iso8601() {
     const auto now = std::chrono::system_clock::now();
     const auto t = std::chrono::system_clock::to_time_t(now);
@@ -1556,6 +1578,7 @@ std::string EdgeNodeService::now_iso8601() {
     return oss.str();
 }
 
+// 解码 URL 查询参数中的百分号编码和加号空格。
 std::string EdgeNodeService::url_decode(const std::string& input) {
     std::string output;
     output.reserve(input.size());
@@ -1575,6 +1598,7 @@ std::string EdgeNodeService::url_decode(const std::string& input) {
     return output;
 }
 
+// 从查询字符串中提取指定键的值。
 std::string EdgeNodeService::get_query_value(const std::string& target, const std::string& key) {
     const auto pos = target.find('?');
     if (pos == std::string::npos) {
@@ -1596,6 +1620,7 @@ std::string EdgeNodeService::get_query_value(const std::string& target, const st
     return {};
 }
 
+// 把十进制或 0x 前缀十六进制文本解析为 32 位无符号整数。
 bool EdgeNodeService::parse_u32(const std::string& text, std::uint32_t& value) {
     if (text.empty()) {
         return false;

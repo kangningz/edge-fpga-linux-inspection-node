@@ -1,4 +1,6 @@
 `timescale 1ns / 1ps
+// 并行输入的帧统计包构建模块。
+// 当各统计字段已经并行可用时，直接生成 32 字节遥测载荷。
 
 module frame_stats_packet_parallel (
     input  wire        clk,
@@ -14,18 +16,13 @@ module frame_stats_packet_parallel (
     output reg  [255:0] pkt_data_256,
     output reg          pkt_valid,
     input  wire         pkt_accept
+
+// 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
 
-    // stats_dout mapping:
-    // [159:144] frame_id
-    // [143:112] timestamp_low
-    // [111:96]  frame_width
-    // [95:80]   frame_height
-    // [79:48]   active_pixel_count
-    // [47:16]   roi_sum
-    // [15:0]    bright_count
-
     integer i;
+
+    // reg 信号保存跨周期状态、计数器、握手标志和流水线寄存结果。
     reg [7:0] b [0:31];
     reg [7:0] checksum_tmp;
 
@@ -37,6 +34,7 @@ module frame_stats_packet_parallel (
     reg [31:0] roi_sum_r;
     reg [15:0] bright_cnt_r;
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             stats_rd_en   <= 1'b0;
@@ -58,10 +56,10 @@ module frame_stats_packet_parallel (
                     roi_sum_r      = stats_dout[47:16];
                     bright_cnt_r   = stats_dout[15:0];
 
-                    b[0]  = 8'h45; // 'E'
-                    b[1]  = 8'h56; // 'V'
-                    b[2]  = 8'h01; // version
-                    b[3]  = 8'h01; // msg_type = frame_stats
+                    b[0]  = 8'h45;
+                    b[1]  = 8'h56;
+                    b[2]  = 8'h01;
+                    b[3]  = 8'h01;
 
                     b[4]  = frame_id_r[15:8];
                     b[5]  = frame_id_r[7:0];

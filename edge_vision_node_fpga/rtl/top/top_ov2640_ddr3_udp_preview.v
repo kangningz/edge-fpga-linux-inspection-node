@@ -1,17 +1,6 @@
 `timescale 1ns / 1ps
-
-// Top-level integration for the edge inspection node.
-//
-// Main clock domains:
-// - sys_clk: board-level control, camera init, LEDs.
-// - camera_pclk: OV2640 pixel stream and ROI statistics.
-// - eth_clk125m: UDP transmit, telemetry packetization, register bank.
-// - rgmii_rx_clk_phase: phase-shifted RGMII receive sampling clock.
-//
-// Main data paths:
-// - Preview: camera -> DDR3 framebuffer -> RGB565 UDP chunks -> Linux.
-// - Telemetry: camera -> ROI stats -> async FIFO -> 32-byte status UDP.
-// - Control: Linux UDP command -> RGMII RX -> command FIFO -> register bank.
+// 边缘视觉节点完整顶层。
+// 集成摄像头、DDR3 帧缓冲、ROI 统计、UDP 预览、遥测上报、命令接收和告警输出。
 
 module top_ov2640_ddr3_udp_preview (
     input  wire FPGA_CLK,
@@ -59,26 +48,26 @@ module top_ov2640_ddr3_udp_preview (
     output reg         LED6,
     output reg         LED7,
     output wire        BEEP
+
+// 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
 
+    // 本地常量定义状态编码、计数上限或协议字段，避免魔法数字散落在逻辑中。
     localparam integer FRAME_WIDTH      = 800;
     localparam integer FRAME_HEIGHT     = 600;
     localparam integer FRAME_BYTES      = FRAME_WIDTH * FRAME_HEIGHT * 2;
     localparam integer INIT_WAIT_CYCLES = 1_000_000;
-    // Stretch short alarm pulses and drive a tone for passive buzzers.
-    // With the current OV2640 PCLK this is about 0.5 s and about 2 kHz.
+
     localparam [24:0] BEEP_HOLD_CYCLES = 25'd12500000;
     localparam [12:0] BEEP_TONE_HALF_CYCLES = 13'd6250;
     localparam        BEEP_ACTIVE_LEVEL = 1'b1;
 
+    // wire 信号承载组合逻辑结果或子模块之间的连接。
     wire manual_rst_n = S0;
     wire sys_clk;
     wire rst_n_sys;
     wire cam_xclk_int;
 
-    // Generate the local control clock and the OV2640 XCLK. The sensor returns
-    // its own camera_pclk, so pixel processing remains in the sensor clock
-    // domain instead of sys_clk.
     clk_rst_mgr #(
         .SYS_CLK_HZ  (50_000_000),
         .CAM_XCLK_HZ (25_000_000)
@@ -89,11 +78,13 @@ module top_ov2640_ddr3_udp_preview (
         .cam_xclk    (cam_xclk_int),
         .rst_n_sys   (rst_n_sys)
     );
+
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign camera_xclk = cam_xclk_int;
 
     wire ddr3_clk200m;
     wire ddr3_clk_locked;
-    // DDR3 MIG uses a dedicated 200 MHz reference clock.
+
     clk_wiz_ddr3_200m u_clk_wiz_ddr3_200m (
         .clk_in1 (FPGA_CLK),
         .reset   (~manual_rst_n),
@@ -103,7 +94,7 @@ module top_ov2640_ddr3_udp_preview (
 
     wire eth_clk125m;
     wire eth_clk_locked;
-    // Ethernet TX, telemetry formatting, and register control run at 125 MHz.
+
     clk_wiz_eth125m u_clk_wiz_eth125m (
         .clk_in1 (FPGA_CLK),
         .reset   (~manual_rst_n),
@@ -111,6 +102,7 @@ module top_ov2640_ddr3_udp_preview (
         .locked  (eth_clk_locked)
     );
 
+    // reg 信号保存跨周期状态、计数器、握手标志和流水线寄存结果。
     reg [19:0] init_wait_cnt;
     reg init_start_pulse;
     reg init_started;
@@ -120,6 +112,7 @@ module top_ov2640_ddr3_udp_preview (
     wire cam_init_done;
     wire cam_init_error;
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge sys_clk or negedge rst_n_sys) begin
         if (!rst_n_sys) begin
             init_wait_cnt         <= 20'd0;
@@ -226,8 +219,6 @@ module top_ov2640_ddr3_udp_preview (
     wire [31:0] cmd_data0_eth;
     wire [31:0] cmd_data1_eth;
 
-    // Runtime register bank. Linux writes these registers through UDP command
-    // packets; the outputs are later synchronized into the camera clock domain.
     vision_reg_bank u_vision_reg_bank (
         .clk              (eth_clk125m),
         .rst_n            (manual_rst_n & eth_clk_locked),
@@ -271,8 +262,6 @@ module top_ov2640_ddr3_udp_preview (
     reg [15:0] alarm_count_threshold_cam_ff1;
     wire       clear_error_cam_pulse;
 
-    // clear_error is a single pulse in eth_clk125m; use a pulse synchronizer so
-    // the camera-domain statistics and buzzer logic see exactly one pulse.
     pulse_sync_toggle u_clear_error_to_cam (
         .src_clk   (eth_clk125m),
         .src_rst_n (manual_rst_n & eth_clk_locked),
@@ -282,9 +271,7 @@ module top_ov2640_ddr3_udp_preview (
         .dst_pulse (clear_error_cam_pulse)
     );
 
-    // Double-register runtime parameters into camera_pclk before they feed the
-    // ROI/statistics core. This avoids direct eth_clk125m -> camera_pclk timing
-    // paths and prevents half-synchronized multi-bit bus values.
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge camera_pclk or negedge rst_n_sys) begin
         if (!rst_n_sys) begin
             capture_enable_cam_ff0    <= 1'b1;
@@ -329,9 +316,6 @@ module top_ov2640_ddr3_udp_preview (
     wire        stats_fifo_overflow_dbg;
     wire        alarm_active_cam;
 
-    // Per-frame lightweight vision processing. It counts valid pixels, sums ROI
-    // brightness, counts pixels above bright_threshold, and emits one stats
-    // record at frame_end.
     vision_preprocess_core #(
         .REPORT_WIDTH          (FRAME_WIDTH),
         .REPORT_HEIGHT         (FRAME_HEIGHT),
@@ -498,6 +482,7 @@ module top_ov2640_ddr3_udp_preview (
         .dst_pulse (wr_frame_done_eth_pulse)
     );
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge camera_pclk or negedge rst_n_sys) begin
         if (!rst_n_sys) begin
             dbg_vsync_seen_cam       <= 1'b0;
@@ -528,6 +513,7 @@ module top_ov2640_ddr3_udp_preview (
         end
     end
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge eth_clk125m or negedge manual_rst_n) begin
         if (!manual_rst_n) begin
             ddr3_init_done_eth_ff0 <= 1'b0;
@@ -653,6 +639,8 @@ module top_ov2640_ddr3_udp_preview (
     );
 
     (* ASYNC_REG = "TRUE" *) reg [2:0] rst_rx_sync_ff;
+
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge rgmii_rx_clk_phase or negedge manual_rst_n or negedge rx_phase_locked) begin
         if (!manual_rst_n || !rx_phase_locked) begin
             rst_rx_sync_ff <= 3'b000;
@@ -662,8 +650,6 @@ module top_ov2640_ddr3_udp_preview (
     end
     wire rst_rx_n = rst_rx_sync_ff[2];
 
-    // RGMII RX requires phase-adjusted sampling. Without this MMCM path, bytes
-    // may be captured with the wrong phase and UDP command parsing will fail.
     wire       gmii_rx_clk;
     wire [7:0] gmii_rxd;
     wire       gmii_rxdv;
@@ -736,8 +722,7 @@ module top_ov2640_ddr3_udp_preview (
     wire        cmd_fifo_empty;
     wire [103:0] cmd_fifo_dout;
     reg         cmd_fifo_rd_en;
-    // Command parser runs in the RGMII RX clock domain; the register bank runs
-    // in eth_clk125m, so commands cross through a small async FIFO.
+
     cmd_async_fifo #(
         .DATA_WIDTH(104),
         .FIFO_DEPTH(16)
@@ -753,6 +738,7 @@ module top_ov2640_ddr3_udp_preview (
         .empty (cmd_fifo_empty)
     );
 
+    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign cmd_valid_eth = ~cmd_fifo_empty;
     assign cmd_code_eth  = cmd_fifo_dout[103:96];
     assign cmd_seq_eth   = cmd_fifo_dout[95:80];
@@ -760,6 +746,7 @@ module top_ov2640_ddr3_udp_preview (
     assign cmd_data0_eth = cmd_fifo_dout[63:32];
     assign cmd_data1_eth = cmd_fifo_dout[31:0];
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge eth_clk125m or negedge manual_rst_n) begin
         if (!manual_rst_n) begin
             cmd_fifo_rd_en <= 1'b0;
@@ -795,8 +782,6 @@ module top_ov2640_ddr3_udp_preview (
     wire [15:0] udp_data_length;
     wire [7:0]  udp_payload_dat;
 
-    // Preview packets and telemetry packets share one UDP transmitter. Telemetry
-    // has priority so status updates are not starved by large preview frames.
     rgb565_udp_preview_payload_gen #(
         .FRAME_WIDTH      (FRAME_WIDTH),
         .FRAME_HEIGHT     (FRAME_HEIGHT),
@@ -842,8 +827,7 @@ module top_ov2640_ddr3_udp_preview (
 
     wire [15:0] status_bits;
     wire [15:0] error_code;
-    // status_bits is the hardware contract consumed by protocol.hpp and the Web
-    // dashboard. Keep this mapping aligned with docs and Linux parser output.
+
     assign status_bits = {
         dbg_stats_wr_seen_eth,
         dbg_pix_valid_seen_eth,
@@ -919,6 +903,7 @@ module top_ov2640_ddr3_udp_preview (
     assign telem_payload_req      = udp_payload_req & udp_tx_busy_mux & (udp_tx_src_sel == UDP_SRC_TELEM);
     assign preview_tx_done        = udp_tx_done & udp_tx_busy_mux & (udp_tx_src_sel == UDP_SRC_PREVIEW);
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge eth_clk125m or negedge manual_rst_n) begin
         if (!manual_rst_n) begin
             udp_tx_busy_mux <= 1'b0;
@@ -995,6 +980,8 @@ module top_ov2640_ddr3_udp_preview (
     reg preview_packet_seen;
     reg preview_frame_seen;
     reg [25:0] hb_cnt;
+
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge sys_clk or negedge rst_n_sys) begin
         if (!rst_n_sys) begin
             hb_cnt             <= 26'd0;
@@ -1034,6 +1021,7 @@ module top_ov2640_ddr3_udp_preview (
     wire       beep_hold_active = (beep_hold_cnt != 25'd0);
     wire       beep_drive_active = alarm_enable_cam_ff1 && beep_hold_active && beep_tone_level;
 
+    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
     always @(posedge camera_pclk or negedge rst_n_sys) begin
         if (!rst_n_sys) begin
             beep_hold_cnt <= 25'd0;
