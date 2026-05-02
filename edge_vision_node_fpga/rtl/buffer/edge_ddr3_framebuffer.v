@@ -1,22 +1,27 @@
 `timescale 1ns / 1ps
-// DDR3 帧缓冲封装模块，把摄像头像素写入外部 DDR3 并为网络预览提供读接口。
-// 该模块隐藏 MIG 初始化、地址递增和读写仲裁细节，顶层只关心帧开始、像素有效和读请求握手。
+// DDR3 帧缓冲封装模块。
+//
+// 功能边界：
+//   1. camera_pclk 域接收 OV2640 8bit 字节流，内部打包成 16bit RGB565。
+//   2. 通过写 FIFO -> MIG/AXI 写入外部 DDR3。
+//   3. rd_clk 域按预览分片模块的 rd_en 请求，从 DDR3 读回 16bit RGB565 像素。
+//   4. 使用两个 DDR3 bank 做帧级双缓冲：摄像头写一个 bank，网络读最近完成的另一个 bank。
+//
+// 本模块只处理“整帧缓存”的策略，真正 AXI/MIG 时序在 edge_ddr3_ctrl_2port 内。
 
 module edge_ddr3_framebuffer #(
 
-    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
+    // 图像宽高必须与摄像头初始化表和网络预览协议一致。
     parameter FRAME_WIDTH     = 800,
-
-    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
     parameter FRAME_HEIGHT    = 600,
 
-    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
+    // 双缓冲第一块帧缓存基地址；第二块从 FRAME_BASE_ADDR + FRAME_BYTES 开始。
     parameter FRAME_BASE_ADDR = 32'h0000_0000,
 
-    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
+    // 单帧字节数，RGB565 为 width * height * 2。
     parameter FRAME_BYTES     = 32'd960000,
 
-    // 参数用于适配不同图像尺寸、时钟频率、缓冲深度或网络地址。
+    // DDR3 控制器每次突发传输的地址跨度，需与底层 FIFO/MIG 搬运粒度匹配。
     parameter BURST_BYTES     = 32'd512
 )(
     input  wire       sys_rst_n,
@@ -72,10 +77,10 @@ module edge_ddr3_framebuffer #(
 // 端口列表到此结束，下面进入内部寄存器、组合连线和时序逻辑。
 );
 
-    // 本地常量定义状态编码、计数上限或协议字段，避免魔法数字散落在逻辑中。
+    // 一帧像素数量。计数用它判断“写完一帧/读完一帧”。
     localparam integer FRAME_PIXELS = FRAME_WIDTH * FRAME_HEIGHT;
 
-    // wire 信号承载组合逻辑结果或子模块之间的连接。
+    // 8bit 摄像头字节流经 packer 后变为 16bit RGB565 像素流。
     wire pixel_valid_16;
     wire [15:0] pixel_data_16;
     wire frame_start_16;
@@ -83,17 +88,26 @@ module edge_ddr3_framebuffer #(
     wire line_start_16;
     wire line_end_16;
     wire packer_error;
+
+    // sys_rst_n 是外部系统复位，这里分别同步到 camera_pclk 和 rd_clk 域。
     (* ASYNC_REG = "TRUE" *) reg cam_rst_ff0 = 1'b0;
     (* ASYNC_REG = "TRUE" *) reg cam_rst_ff1 = 1'b0;
     (* ASYNC_REG = "TRUE" *) reg rd_rst_ff0 = 1'b0;
     (* ASYNC_REG = "TRUE" *) reg rd_rst_ff1 = 1'b0;
 
-    // reg 信号保存跨周期状态、计数器、握手标志和流水线寄存结果。
+    // 写/读像素计数用于在帧尾确认已经搬够一整帧。
     reg [19:0] wr_pixel_cnt;
     reg [19:0] rd_pixel_cnt;
 
+    // wrfifo_clr/rdfifo_clr 用来在新帧开始或读帧重启时清空异步 FIFO，避免上一帧残留字节混入。
     reg wrfifo_clr;
     reg rdfifo_clr;
+
+    // bank 选择：
+    //   wr_bank_cam               : 摄像头下一帧写入的 bank
+    //   latest_completed_bank_cam  : 最近完整写好的 bank
+    //   rd_bank_sel_rd            : 当前网络读侧选择的 bank
+    //   rd_busy_rd                : 网络读侧正在读取一帧，写侧据此避免覆盖正在读的 bank
     reg wr_bank_cam;
     reg latest_completed_bank_cam;
     reg rd_bank_sel_rd;
@@ -122,25 +136,25 @@ module edge_ddr3_framebuffer #(
     wire [31:0] rd_addr_begin = FRAME_BASE_ADDR + (rd_bank_ui ? FRAME_BYTES : 32'd0);
     wire [31:0] rd_addr_end   = rd_addr_begin + FRAME_BYTES - BURST_BYTES;
 
-    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
+    // 复位同步到摄像头写侧。
     always @(posedge camera_pclk) begin
         cam_rst_ff0 <= sys_rst_n;
         cam_rst_ff1 <= cam_rst_ff0;
     end
 
-    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
+    // 复位同步到网络读侧。
     always @(posedge rd_clk) begin
         rd_rst_ff0 <= sys_rst_n;
         rd_rst_ff1 <= rd_rst_ff0;
     end
 
-    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
+    // 最近完成写入的 bank 从摄像头域同步到网络读域，新一轮预览读取会锁存这个 bank。
     always @(posedge rd_clk) begin
         latest_completed_bank_rd_ff0 <= latest_completed_bank_cam;
         latest_completed_bank_rd_ff1 <= latest_completed_bank_rd_ff0;
     end
 
-    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
+    // 网络读忙状态和当前读 bank 同步回摄像头域，用来避免写侧切换到正在被读的 bank。
     always @(posedge camera_pclk) begin
         rd_busy_cam_ff0 <= rd_busy_rd;
         rd_busy_cam_ff1 <= rd_busy_cam_ff0;
@@ -148,7 +162,7 @@ module edge_ddr3_framebuffer #(
         rd_bank_cam_ff1 <= rd_bank_cam_ff0;
     end
 
-    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
+    // bank 选择同步到 MIG ui_clk 域，底层 DDR 控制器在 ui_clk 域使用这些地址。
     always @(posedge ui_clk or posedge ui_rst) begin
         if (ui_rst) begin
             wr_bank_ui_ff0 <= 1'b0;
@@ -167,6 +181,8 @@ module edge_ddr3_framebuffer #(
         end
     end
 
+    // 把 OV2640 8bit 字节流组装为 16bit RGB565 像素。
+    // byte_phase_error 表示帧/行边界打断了两个字节的配对，可用于定位摄像头时序或初始化问题。
     ov2640_rgb565_packer u_ov2640_rgb565_packer (
         .rst_n           (cam_rst_n),
         .camera_pclk     (camera_pclk),
@@ -185,7 +201,7 @@ module edge_ddr3_framebuffer #(
         .byte_phase_error(packer_error)
     );
 
-    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
+    // 新帧开始时清写 FIFO，确保 DDR3 中每帧从帧首地址开始写入，且不会带入上一帧尾部残留。
     always @(posedge camera_pclk) begin
         if (!cam_rst_n) begin
             wrfifo_clr <= 1'b1;
@@ -194,7 +210,9 @@ module edge_ddr3_framebuffer #(
         end
     end
 
-    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
+    // 写侧帧完成判断和双缓冲切换。
+    // frame_end_16 到来且像素数达到一帧时，标记当前 bank 为 latest_completed。
+    // 如果另一个 bank 正在被网络读侧使用，则暂停切 bank，避免覆盖正在发送的帧。
     always @(posedge camera_pclk) begin
         if (!cam_rst_n) begin
             wr_pixel_cnt      <= 20'd0;
@@ -225,7 +243,7 @@ module edge_ddr3_framebuffer #(
         end
     end
 
-    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
+    // 读侧每次收到 rd_frame_restart 都清读 FIFO，并准备从最近完成的 bank 重新读一整帧。
     always @(posedge rd_clk) begin
         if (!rd_rst_n) begin
             rdfifo_clr <= 1'b1;
@@ -236,7 +254,8 @@ module edge_ddr3_framebuffer #(
         end
     end
 
-    // 时序逻辑：在指定时钟沿更新状态，并在复位时恢复到安全初值。
+    // 读侧像素计数。预览分片模块每成功消费一个 rd_pixel，就通过 rd_en 推进一个像素。
+    // 读满 FRAME_PIXELS 后产生 rd_frame_done_dbg。
     always @(posedge rd_clk) begin
         if (!rd_rst_n) begin
             rd_pixel_cnt      <= 20'd0;
@@ -261,6 +280,10 @@ module edge_ddr3_framebuffer #(
         end
     end
 
+    // 两端口 DDR3 控制器封装：
+    //   写端口：camera_pclk + wrfifo_*，地址使用 wr_addr_begin/end。
+    //   读端口：rd_clk + rdfifo_*，地址使用 rd_addr_begin/end。
+    // 底层会将 FIFO 数据搬运到 MIG AXI 总线。
     edge_ddr3_ctrl_2port u_edge_ddr3_ctrl_2port (
         .ddr3_clk200m (ddr3_clk200m),
         .ddr3_rst_n   (ddr3_rst_n),
@@ -304,10 +327,8 @@ module edge_ddr3_framebuffer #(
         .ddr3_odt     (ddr3_odt)
     );
 
-    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
+    // 调试信号透传给顶层 LED/遥测。
     assign frame_start_16_dbg = frame_start_16;
-
-    // 连续赋值用于输出固定映射、组合判断或协议字段拼接。
     assign frame_end_16_dbg   = frame_end_16;
     assign packer_error_dbg   = packer_error;
 
